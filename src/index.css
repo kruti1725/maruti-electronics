@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom styling for thermal sticker roll 50mm x 25mm */
+@media print {
+  body.printing-sticker {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 50mm !important;
+    height: 25mm !important;
+  }
+
+  body.printing-sticker * {
+    visibility: hidden;
+  }
+
+  body.printing-sticker #sticker-print-area,
+  body.printing-sticker #sticker-print-area * {
+    visibility: visible;
+  }
+
+  body.printing-sticker #sticker-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 50mm !important;
+    height: 25mm !important;
+    margin: 0 !important;
+    padding: 1.5mm !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Normal A4 print */
+  body.printing-a4 * {
+    visibility: hidden;
+  }
+
+  body.printing-a4 #a4-receipt-print-area,
+  body.printing-a4 #a4-receipt-print-area * {
+    visibility: visible;
+  }
+
+  body.printing-a4 #a4-receipt-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 12mm !important;
+    box-sizing: border-box !important;
+  }
+}
+
+/* Sticker thermal typography */
+.sticker-box {
+  width: 50mm;
+  height: 25mm;
+  box-sizing: border-box;
+  overflow: hidden;
+}

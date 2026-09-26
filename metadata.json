@@ -1,0 +1,6 @@
+{
+  "name": "Kruti Electronics - TV Repair Management System",
+  "description": "Kruti Electronics provides fast and reliable TV repair and electronics service. Customers can track repair status by receipt or mobile number.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

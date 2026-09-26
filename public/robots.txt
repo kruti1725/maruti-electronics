@@ -1,0 +1,12 @@
+# robots.txt for Kruti Electronics
+User-agent: *
+Allow: /
+Allow: /search-receipt
+Disallow: /dashboard
+Disallow: /add-receipt
+Disallow: /all-receipts
+Disallow: /update-receipt/
+Disallow: /login
+Disallow: /api/
+
+Sitemap: https://krutielectronics.com/sitemap.xml
