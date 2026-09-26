@@ -11,11 +11,13 @@ interface StickerPrintProps {
 /**
  * Real sticker printing function using an isolated print iframe
  * strictly configured for 50mm x 25mm thermal sticker rolls.
+ * Displays: Receipt No, Customer Name, Received Date, Fault / Complaint.
  */
 export function printStickerDirect(receipt: IReceipt) {
-  const serialNo = receipt.serialNumber.replace(/^KR-?/i, '');
+  const receiptNo = receipt.serialNumber;
   const customerName = receipt.customerName.toUpperCase();
-  const mobile = receipt.mobileNumber;
+  const date = receipt.receivedDate;
+  const fault = receipt.tvs.map((tv) => tv.complaint).filter(Boolean).join(', ') || 'General Repair';
 
   // Create an invisible iframe for printing
   const iframeId = 'kruti_sticker_print_frame';
@@ -67,7 +69,7 @@ export function printStickerDirect(receipt: IReceipt) {
     .sticker-container {
       width: 50mm;
       height: 25mm;
-      padding: 1.5mm 2.2mm;
+      padding: 1.2mm 2mm;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -75,25 +77,25 @@ export function printStickerDirect(receipt: IReceipt) {
     }
     .header {
       text-align: center;
-      font-size: 8.5pt;
+      font-size: 8pt;
       font-weight: 900;
       letter-spacing: 0.2px;
-      line-height: 1.05;
+      line-height: 1;
       text-transform: uppercase;
       border-bottom: 0.6px solid #000000;
-      padding-bottom: 0.5mm;
+      padding-bottom: 0.4mm;
     }
     .content-body {
       display: flex;
       flex-direction: column;
-      gap: 0.6mm;
-      padding-top: 0.4mm;
+      gap: 0.5mm;
+      padding-top: 0.3mm;
     }
     .row {
       display: flex;
       align-items: baseline;
-      font-size: 7pt;
-      line-height: 1.1;
+      font-size: 6.8pt;
+      line-height: 1.05;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -104,14 +106,14 @@ export function printStickerDirect(receipt: IReceipt) {
       display: inline-block;
     }
     .value {
-      font-weight: 800;
-      font-size: 7.2pt;
+      font-weight: 700;
+      font-size: 6.8pt;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .serial-val {
-      font-size: 8.5pt;
+      font-size: 8pt;
       font-weight: 900;
     }
   </style>
@@ -121,16 +123,20 @@ export function printStickerDirect(receipt: IReceipt) {
     <div class="header">KRUTI ELECTRONICS</div>
     <div class="content-body">
       <div class="row">
-        <span class="label">Serial No:</span>
-        <span class="value serial-val">${serialNo || receipt.serialNumber}</span>
+        <span class="label">Receipt No:</span>
+        <span class="value serial-val">${receiptNo}</span>
       </div>
       <div class="row">
         <span class="label">Name:</span>
         <span class="value">${customerName}</span>
       </div>
       <div class="row">
-        <span class="label">Mobile:</span>
-        <span class="value">${mobile}</span>
+        <span class="label">Date:</span>
+        <span class="value">${date}</span>
+      </div>
+      <div class="row">
+        <span class="label">Fault:</span>
+        <span class="value">${fault}</span>
       </div>
     </div>
   </div>
@@ -148,19 +154,15 @@ export function printStickerDirect(receipt: IReceipt) {
   doc.open();
   doc.write(html);
   doc.close();
-
-  // Clean up iframe after printing dialog closes
-  setTimeout(() => {
-    iframe.remove();
-  }, 60000);
 }
 
 export const StickerPrint: React.FC<StickerPrintProps> = ({ receipt, isOpen, onClose }) => {
   if (!isOpen || !receipt) return null;
 
-  const serialNo = receipt.serialNumber.replace(/^KR-?/i, '');
+  const receiptNo = receipt.serialNumber;
   const customerName = receipt.customerName.toUpperCase();
-  const mobile = receipt.mobileNumber;
+  const date = receipt.receivedDate;
+  const fault = receipt.tvs.map((tv) => tv.complaint).filter(Boolean).join(', ') || 'General Repair';
 
   const handlePrint = () => {
     printStickerDirect(receipt);
@@ -185,7 +187,7 @@ export const StickerPrint: React.FC<StickerPrintProps> = ({ receipt, isOpen, onC
 
         <div className="p-6">
           <p className="text-xs text-slate-600 mb-4">
-            Stick this label directly onto the TV back cover or customer stand for rapid identification during workshop servicing.
+            Stick this label directly onto the TV back cover or customer stand for rapid workshop identification.
           </p>
 
           {/* Actual 50mm x 25mm Scaled Preview Card */}
@@ -199,22 +201,26 @@ export const StickerPrint: React.FC<StickerPrintProps> = ({ receipt, isOpen, onC
               style={{ width: '50mm', height: '25mm' }}
               className="bg-white border-2 border-slate-900 shadow-md p-1.5 flex flex-col justify-between select-none"
             >
-              <div className="text-center font-black text-[9pt] leading-none uppercase border-b border-black pb-0.5 tracking-tight">
+              <div className="text-center font-black text-[8pt] leading-none uppercase border-b border-black pb-0.5 tracking-tight">
                 KRUTI ELECTRONICS
               </div>
 
-              <div className="flex flex-col gap-0.5 text-[7pt] leading-tight font-bold text-slate-900">
+              <div className="flex flex-col gap-0.5 text-[6.5pt] leading-tight font-bold text-slate-900">
                 <div className="flex items-center justify-between">
-                  <span className="font-extrabold">Serial No:</span>
-                  <span className="font-black text-[8.5pt]">{serialNo || receipt.serialNumber}</span>
+                  <span className="font-extrabold">Receipt No:</span>
+                  <span className="font-black text-[7.5pt] font-mono">{receiptNo}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-extrabold">Name:</span>
-                  <span className="truncate max-w-[32mm] text-right">{customerName}</span>
+                  <span className="truncate max-w-[32mm] text-right font-medium">{customerName}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="font-extrabold">Mobile:</span>
-                  <span className="font-mono">{mobile}</span>
+                  <span className="font-extrabold">Date:</span>
+                  <span className="font-mono">{date}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold">Fault:</span>
+                  <span className="truncate max-w-[32mm] text-right font-normal">{fault}</span>
                 </div>
               </div>
             </div>
@@ -249,7 +255,7 @@ export const StickerPrint: React.FC<StickerPrintProps> = ({ receipt, isOpen, onC
             onClick={handlePrint}
             className="px-6 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-red-600/30 flex items-center gap-2 cursor-pointer transition"
           >
-            <Printer className="w-4 h-4" /> Print Thermal Sticker
+            <Printer className="w-4 h-4" /> Print Sticker Label
           </button>
         </div>
       </div>

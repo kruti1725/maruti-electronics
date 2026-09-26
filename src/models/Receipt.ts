@@ -13,7 +13,7 @@ const TVItemSchema = new Schema<TVItem>(
     cost: { type: Number, default: 0, min: 0 },
     status: {
       type: String,
-      enum: ['Pending', 'Under Repair', 'Ready', 'Delivered'],
+      enum: ['Pending', 'Under Repair', 'Ready', 'Delivered', 'Return', 'Reject'],
       default: 'Pending',
       required: true,
     },
@@ -59,6 +59,16 @@ const ReceiptSchema = new Schema<IReceiptDocument>(
       required: [true, 'Received date is required'],
       index: true,
     },
+    revisedDate: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    outDate: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     repairBy: {
       type: String,
       default: '',
@@ -79,7 +89,6 @@ const ReceiptSchema = new Schema<IReceiptDocument>(
   }
 );
 
-// Compound and text indexes for fast searching
 ReceiptSchema.index({ customerName: 'text', serialNumber: 'text', mobileNumber: 'text' });
 
 export const ReceiptModel: Model<IReceiptDocument> =

@@ -49,6 +49,17 @@ const COMMON_COMPLAINTS = [
 
 const TV_SIZES = ['24 inch', '32 inch', '40 inch', '43 inch', '50 inch', '55 inch', '65 inch', '75 inch', 'Other'];
 
+const TECHNICIANS = [
+  'Manoj',
+  'Prashant',
+  'Swapnil',
+  'Bhavesh',
+  'Golu',
+  'Rakesh',
+  'Durga',
+  'Rohit',
+];
+
 export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   initialData,
   isEditMode = false,
@@ -76,6 +87,8 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   const [customerName, setCustomerName] = useState(initialData?.customerName || '');
   const [mobileNumber, setMobileNumber] = useState(initialData?.mobileNumber || '');
   const [receivedDate, setReceivedDate] = useState(initialData?.receivedDate || getTodayDate());
+  const [revisedDate, setRevisedDate] = useState(initialData?.revisedDate || '');
+  const [outDate, setOutDate] = useState(initialData?.outDate || '');
   const [repairBy, setRepairBy] = useState(initialData?.repairBy || '');
   const [remarks, setRemarks] = useState(initialData?.remarks || '');
   const [tvs, setTvs] = useState<TVItem[]>(
@@ -107,7 +120,6 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   };
 
   const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Only allow digits, max 10 digits
     const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
     setMobileNumber(cleaned);
   };
@@ -117,6 +129,8 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     setCustomerName('');
     setMobileNumber('');
     setReceivedDate(getTodayDate());
+    setRevisedDate('');
+    setOutDate('');
     setRepairBy('');
     setRemarks('');
     setTvs([createBlankTV()]);
@@ -135,6 +149,8 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
       customerName: customerName.trim(),
       mobileNumber: mobileNumber.trim(),
       receivedDate,
+      revisedDate: revisedDate.trim(),
+      outDate: outDate.trim(),
       repairBy: repairBy.trim(),
       remarks: remarks.trim(),
       tvs,
@@ -149,7 +165,6 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
         fieldErrors[path] = issue.message;
       });
       setErrors(fieldErrors);
-      // scroll to top of form
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -168,45 +183,27 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
         body: JSON.stringify(formData),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.receipt) {
-          setSuccessMessage(isEditMode ? 'Receipt Updated Successfully!' : 'Receipt Saved Successfully');
-          if (!isEditMode) {
-            resetForm();
-          }
-          // Also sync to client storage
-          if (isEditMode && initialData) {
-            try { updateClientReceipt(initialData.serialNumber, data.receipt); } catch {}
-          } else {
-            try { saveClientReceipt(data.receipt); } catch {}
-          }
-          onSuccess(data.receipt);
-          return;
-        }
-      }
-      throw new Error('API save failed');
-    } catch {
-      // Local fallback save
-      try {
-        let savedReceipt: IReceipt;
-        if (isEditMode && initialData) {
-          savedReceipt = updateClientReceipt(initialData.serialNumber, formData);
-        } else {
-          savedReceipt = saveClientReceipt(formData);
-        }
-        setSuccessMessage(
-          isEditMode
-            ? 'Receipt Updated Successfully (Saved to Local Storage)!'
-            : 'Receipt Saved Successfully (Saved to Local Storage)!'
-        );
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success && data.receipt) {
+        setSuccessMessage(isEditMode ? 'Receipt Updated Successfully!' : 'Receipt Saved to MongoDB Atlas Successfully!');
         if (!isEditMode) {
           resetForm();
         }
-        onSuccess(savedReceipt);
-      } catch (err: any) {
-        setServerError(err.message || 'Failed to save receipt.');
+        if (isEditMode && initialData) {
+          try { updateClientReceipt(initialData.serialNumber, data.receipt); } catch {}
+        } else {
+          try { saveClientReceipt(data.receipt); } catch {}
+        }
+        onSuccess(data.receipt);
+        return;
+      } else {
+        throw new Error(data.error || 'Server error: Failed to save receipt to MongoDB Atlas.');
       }
+    } catch (err: any) {
+      setServerError(
+        err.message || 'MongoDB Atlas se connection fail ho gaya. Kripya check karein ki Vercel par MONGODB_URI set hai aur Network Access 0.0.0.0/0 allowed hai.'
+      );
     } finally {
       setLoading(false);
     }
@@ -276,25 +273,29 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Section 1: Customer & General Information */}
         <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 p-6 sm:p-8">
-          <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-3 mb-6">
-            1. Customer & Job Information
-          </h2>
+          <div className="border-b border-slate-100 pb-4 mb-6">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              1. Customer & Workshop Details
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Unique Serial Number is auto-assigned. Enter customer contact information.
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Serial / Receipt Number */}
+            {/* Serial Number */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Receipt / Serial No. <span className="text-red-600">*</span>
+                Serial Number <span className="text-red-600">*</span>
               </label>
               <input
                 type="text"
                 value={serialNumber}
                 onChange={(e) => setSerialNumber(e.target.value.toUpperCase())}
-                placeholder="e.g. KR00101"
-                className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-mono font-bold focus:bg-white focus:outline-none transition ${
+                placeholder="KR00101"
+                className={`w-full px-4 py-3 bg-slate-100 border-2 rounded-xl text-slate-900 font-mono font-bold focus:bg-white focus:outline-none transition ${
                   errors.serialNumber ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
                 }`}
-                disabled={isEditMode}
               />
               {errors.serialNumber && (
                 <p className="text-xs text-red-600 mt-1 font-medium">{errors.serialNumber}</p>
@@ -363,22 +364,53 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
               )}
             </div>
 
-            {/* Repair By (Technician) */}
+            {/* Revise Date */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Repair Handled By
+                Revise Date (Expected)
               </label>
               <input
-                type="text"
-                value={repairBy}
-                onChange={(e) => setRepairBy(e.target.value)}
-                placeholder="Technician name (e.g. Ramesh Sharma)"
+                type="date"
+                value={revisedDate}
+                onChange={(e) => setRevisedDate(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
               />
             </div>
 
-            {/* Remarks / Accessories */}
+            {/* Out Date */}
             <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                Out Date (Delivery)
+              </label>
+              <input
+                type="date"
+                value={outDate}
+                onChange={(e) => setOutDate(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
+              />
+            </div>
+
+            {/* Repair By (Technician Dropdown) */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                Repair Handled By
+              </label>
+              <select
+                value={repairBy}
+                onChange={(e) => setRepairBy(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
+              >
+                <option value="">-- Select Technician --</option>
+                {TECHNICIANS.map((tech) => (
+                  <option key={tech} value={tech}>
+                    {tech}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Remarks / Accessories */}
+            <div className="sm:col-span-2">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                 Remarks / Accessories Deposited
               </label>
@@ -443,22 +475,24 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Brand */}
+                  {/* Brand (Typing Free Input) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Brand <span className="text-red-600">*</span>
                     </label>
-                    <select
+                    <input
+                      type="text"
+                      list={`brand-suggestions-${idx}`}
                       value={tv.brand}
                       onChange={(e) => handleTVChange(idx, 'brand', e.target.value)}
+                      placeholder="e.g. Sony, Samsung, LG"
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
-                    >
+                    />
+                    <datalist id={`brand-suggestions-${idx}`}>
                       {COMMON_BRANDS.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
+                        <option key={b} value={b} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
 
                   {/* Model Number */}
@@ -475,22 +509,24 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     />
                   </div>
 
-                  {/* Size */}
+                  {/* Size (Typing Free Input) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       TV Size
                     </label>
-                    <select
+                    <input
+                      type="text"
+                      list={`size-suggestions-${idx}`}
                       value={tv.size}
                       onChange={(e) => handleTVChange(idx, 'size', e.target.value)}
+                      placeholder="e.g. 32 inch, 43 inch, 55 inch"
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
-                    >
+                    />
+                    <datalist id={`size-suggestions-${idx}`}>
                       {TV_SIZES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
+                        <option key={s} value={s} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
 
                   {/* Priority */}
@@ -509,7 +545,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </select>
                   </div>
 
-                  {/* Complaint (Full row or 2 cols) */}
+                  {/* Complaint */}
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Complaint / Problem Description <span className="text-red-600">*</span>
@@ -529,7 +565,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </datalist>
                   </div>
 
-                  {/* Status */}
+                  {/* Repair Status (With Return & Reject) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Repair Status <span className="text-red-600">*</span>
@@ -544,6 +580,10 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                           ? 'bg-blue-50 text-blue-900 border-blue-300'
                           : tv.status === 'Ready'
                           ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                          : tv.status === 'Return'
+                          ? 'bg-purple-100 text-purple-900 border-purple-300'
+                          : tv.status === 'Reject'
+                          ? 'bg-rose-100 text-rose-900 border-rose-300'
                           : 'bg-slate-800 text-white border-slate-700'
                       }`}
                     >
@@ -551,6 +591,8 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                       <option value="Under Repair">Under Repair</option>
                       <option value="Ready">Ready</option>
                       <option value="Delivered">Delivered</option>
+                      <option value="Return">Return</option>
+                      <option value="Reject">Reject</option>
                     </select>
                   </div>
 

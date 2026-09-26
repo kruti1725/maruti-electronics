@@ -16,9 +16,10 @@ import {
   AlertTriangle,
   RefreshCw,
   PlusCircle,
+  X,
 } from 'lucide-react';
 import { IReceipt, TVStatus, TVPriority } from '../types/receipt';
-import { generateWhatsAppLink, sanitizeMobileNumber } from '../lib/whatsapp';
+import { generateHalfDetailWhatsAppLink, generateFullDetailWhatsAppLink, sanitizeMobileNumber } from '../lib/whatsapp';
 import { printStickerDirect } from './StickerPrint';
 import { ConfirmDialog } from './ConfirmDialog';
 import { getClientReceipts, deleteClientReceipt } from '../lib/client-storage';
@@ -53,6 +54,10 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
   const [receiptToDelete, setReceiptToDelete] = useState<IReceipt | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // WhatsApp Share Dialog
+  const [whatsAppReceipt, setWhatsAppReceipt] = useState<IReceipt | null>(null);
+  const [whatsAppMode, setWhatsAppMode] = useState<'half' | 'full'>('half');
+
   const fetchReceipts = async () => {
     setLoading(true);
     setError(null);
@@ -76,28 +81,45 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
           return;
         }
       }
-      throw new Error('API unavailable, using local store');
+      throw new Error('API fetch error');
     } catch {
-      // Seamless local fallback
-      let list = getClientReceipts();
+      // Local fallback
+      const local = getClientReceipts();
+      let filtered = [...local];
+
       if (searchTerm) {
-        const q = searchTerm.toLowerCase().trim();
-        list = list.filter(
+        const lower = searchTerm.toLowerCase();
+        filtered = filtered.filter(
           (r) =>
-            r.serialNumber.toLowerCase().includes(q) ||
-            r.customerName.toLowerCase().includes(q) ||
-            r.mobileNumber.includes(q)
+            r.serialNumber.toLowerCase().includes(lower) ||
+            r.customerName.toLowerCase().includes(lower) ||
+            r.mobileNumber.includes(lower) ||
+            r.tvs.some((tv) => tv.brand.toLowerCase().includes(lower))
         );
       }
+
       if (statusFilter !== 'All') {
-        list = list.filter((r) => r.tvs.some((t) => t.status === statusFilter));
+        filtered = filtered.filter((r) => r.tvs.some((tv) => tv.status === statusFilter));
       }
+
       if (priorityFilter !== 'All') {
-        list = list.filter((r) => r.tvs.some((t) => t.priority === priorityFilter));
+        filtered = filtered.filter((r) => r.tvs.some((tv) => tv.priority === priorityFilter));
       }
-      setReceipts(list);
-      setTotalPages(1);
-      setTotalCount(list.length);
+
+      if (daysFilter === '4+') {
+        const now = Date.now();
+        filtered = filtered.filter((r) => {
+          const recDate = new Date(r.receivedDate).getTime();
+          const diffDays = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
+          const hasNotDelivered = r.tvs.some((tv) => tv.status !== 'Delivered' && tv.status !== 'Return' && tv.status !== 'Reject');
+          return hasNotDelivered && diffDays >= 4;
+        });
+      }
+
+      setTotalCount(filtered.length);
+      setTotalPages(Math.ceil(filtered.length / 20) || 1);
+      const start = (page - 1) * 20;
+      setReceipts(filtered.slice(start, start + 20));
     } finally {
       setLoading(false);
     }
@@ -113,9 +135,18 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
     fetchReceipts();
   };
 
-  // WhatsApp click handler (Section 17)
+  // WhatsApp click handler
   const handleWhatsApp = (receipt: IReceipt) => {
-    const url = generateWhatsAppLink(receipt);
+    setWhatsAppReceipt(receipt);
+    setWhatsAppMode('half');
+  };
+
+  const handleSendWhatsApp = (receipt: IReceipt, mode: 'half' | 'full') => {
+    const url =
+      mode === 'half'
+        ? generateHalfDetailWhatsAppLink(receipt)
+        : generateFullDetailWhatsAppLink(receipt);
+
     if (!url) {
       alert('Invalid customer mobile number. Cannot open WhatsApp.');
       return;
@@ -123,7 +154,7 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  // Delete Receipt handler (Section 14)
+  // Delete Receipt handler
   const handleConfirmDelete = async () => {
     if (!receiptToDelete) return;
     setIsDeleting(true);
@@ -142,7 +173,6 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
       }
       throw new Error('API delete failed');
     } catch {
-      // Local delete fallback
       deleteClientReceipt(receiptToDelete.serialNumber);
       setReceiptToDelete(null);
       await fetchReceipts();
@@ -151,7 +181,7 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
     }
   };
 
-  // Excel Export (Section 37)
+  // Excel Export
   const handleExportExcel = () => {
     if (receipts.length === 0) {
       alert('No receipts available to export.');
@@ -173,11 +203,13 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
           'Repair By': r.repairBy || 'N/A',
           Priority: tv.priority,
           'Rack No': tv.rackNo || 'N/A',
-          Payment: tv.paymentMethod,
+          Status: tv.status,
           'Estimated Cost': tv.estimatedCost,
           'Actual Cost': tv.cost,
-          Status: tv.status,
+          'Payment Method': tv.paymentMethod,
           'Received Date': r.receivedDate,
+          'Revise Date': r.revisedDate || 'N/A',
+          'Out Date': r.outDate || 'N/A',
           Remarks: r.remarks || '',
         });
       });
@@ -185,34 +217,29 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Receipts');
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(workbook, `Receipts_${todayStr}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Repair Receipts');
+    XLSX.writeFile(workbook, `Kruti_Electronics_Receipts_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Top Header & Export */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
-            <span className="p-2 rounded-xl bg-red-50 text-red-600">
-              <FileSpreadsheet className="w-6 h-6" />
-            </span>
-            All Repair Receipts
+            TV Repair Job Cards
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Browse, search, edit, print thermal labels, or trigger WhatsApp receipts ({totalCount} total records).
+            Search, filter by status, update details, print 50x25mm labels, and dispatch WhatsApp alerts.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={onAddNew}
-            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/25 flex items-center gap-2 transition cursor-pointer"
+            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/30 flex items-center gap-2 transition cursor-pointer"
           >
-            <PlusCircle className="w-4 h-4" /> Add Receipt
+            <PlusCircle className="w-4 h-4" /> Add New Receipt
           </button>
 
           <button
@@ -278,6 +305,8 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
               <option value="Under Repair">Under Repair</option>
               <option value="Ready">Ready</option>
               <option value="Delivered">Delivered</option>
+              <option value="Return">Return</option>
+              <option value="Reject">Reject</option>
             </select>
           </div>
 
@@ -299,9 +328,9 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
             </select>
           </div>
 
-          {/* Days Filter */}
+          {/* Aging Filter */}
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 font-semibold">Age / Days:</span>
+            <span className="text-slate-500 font-semibold">Aging:</span>
             <select
               value={daysFilter}
               onChange={(e) => {
@@ -311,151 +340,119 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
               className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-bold focus:outline-none"
             >
               <option value="All">All Days</option>
-              <option value="0-3">0 – 3 Days (Fresh)</option>
-              <option value="4+">4+ Days (Old Receipt)</option>
+              <option value="4+">Over 4 Days Pending (Old)</option>
             </select>
           </div>
-
-          {(searchTerm || statusFilter !== 'All' || priorityFilter !== 'All' || daysFilter !== 'All') && (
-            <button
-              onClick={() => {
-                setSearchTerm('');
-                setStatusFilter('All');
-                setPriorityFilter('All');
-                setDaysFilter('All');
-                setPage(1);
-              }}
-              className="text-red-600 hover:text-red-700 font-bold underline ml-auto cursor-pointer"
-            >
-              Clear Filters
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Error alert */}
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-900 rounded-2xl flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-            <span className="text-sm font-medium">{error}</span>
-          </div>
-          <button
-            onClick={fetchReceipts}
-            className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Main Table Container (Responsive Horizontal Scroll) */}
-      <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto w-full">
-          <table className="w-full text-left text-xs whitespace-nowrap border-collapse min-w-[1250px]">
-            <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider border-b border-slate-200">
+      {/* Main Receipts Table */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead className="bg-slate-900 text-white font-extrabold tracking-wider uppercase text-[11px]">
               <tr>
-                <th className="py-3.5 px-4">Receipt No</th>
-                <th className="py-3.5 px-4">Customer</th>
-                <th className="py-3.5 px-4">Mobile</th>
-                <th className="py-3.5 px-4">Received Date</th>
-                <th className="py-3.5 px-4">TV Brand & Model</th>
-                <th className="py-3.5 px-4">Repair By</th>
-                <th className="py-3.5 px-4">Priority</th>
-                <th className="py-3.5 px-4">Rack</th>
-                <th className="py-3.5 px-4">Payment</th>
-                <th className="py-3.5 px-4 text-right">Est. Cost</th>
-                <th className="py-3.5 px-4 text-right">Actual Cost</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4">Days</th>
-                <th className="py-3.5 px-4 max-w-[150px]">Remarks</th>
-                <th className="py-3.5 px-4 text-center sticky right-0 bg-slate-100 z-10 shadow-l">
+                <th className="py-4 px-4">Receipt No</th>
+                <th className="py-4 px-4">Customer</th>
+                <th className="py-4 px-4">TV Unit / Model</th>
+                <th className="py-4 px-4">Problem / Fault</th>
+                <th className="py-4 px-4">Technician</th>
+                <th className="py-4 px-4">Priority</th>
+                <th className="py-4 px-4">Rack</th>
+                <th className="py-4 px-4">Payment</th>
+                <th className="py-4 px-4 text-right">Est. Cost</th>
+                <th className="py-4 px-4 text-right">Actual Cost</th>
+                <th className="py-4 px-4">Status</th>
+                <th className="py-4 px-4">Age</th>
+                <th className="py-4 px-4">Remarks</th>
+                <th className="py-4 px-4 text-center sticky right-0 bg-slate-900 z-10 shadow-l">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+
+            <tbody className="divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td colSpan={15} className="py-12 text-center text-slate-500">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto text-red-600 mb-2" />
-                    Loading receipts from database...
+                  <td colSpan={14} className="py-12 text-center text-slate-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="w-6 h-6 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                      <span className="font-semibold text-xs">Loading repair job cards...</span>
+                    </div>
                   </td>
                 </tr>
               ) : receipts.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="py-12 text-center text-slate-500">
-                    <p className="text-base font-bold text-slate-700">No receipts found.</p>
+                  <td colSpan={14} className="py-12 text-center text-slate-500">
+                    <p className="font-bold text-sm text-slate-700">No repair receipts found.</p>
                     <p className="text-xs text-slate-400 mt-1">
-                      Try adjusting your search criteria or add a new receipt.
+                      Try resetting your filters or click "Add New Receipt" above.
                     </p>
                   </td>
                 </tr>
               ) : (
                 receipts.map((receipt) => {
-                  const daysSinceReceived = Math.floor(
-                    (Date.now() - new Date(receipt.receivedDate).getTime()) / (1000 * 60 * 60 * 24)
-                  );
+                  const now = Date.now();
+                  const recDate = new Date(receipt.receivedDate).getTime();
+                  const daysSinceReceived = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
+                  const isOldReceipt =
+                    receipt.tvs.some((tv) => tv.status !== 'Delivered' && tv.status !== 'Return' && tv.status !== 'Reject') &&
+                    daysSinceReceived >= 4;
 
-                  // Old receipt rule (Section 38): If days >= 4 AND TV is not Delivered -> highlight!
-                  const hasNonDeliveredTV = receipt.tvs.some((tv) => tv.status !== 'Delivered');
-                  const isOldReceipt = daysSinceReceived >= 4 && hasNonDeliveredTV;
-
-                  const totalEst = receipt.tvs.reduce((sum, t) => sum + (t.estimatedCost || 0), 0);
-                  const totalAct = receipt.tvs.reduce((sum, t) => sum + (t.cost || 0), 0);
-
-                  // Status summarization
+                  const totalEst = receipt.tvs.reduce((acc, tv) => acc + (tv.estimatedCost || 0), 0);
+                  const totalAct = receipt.tvs.reduce((acc, tv) => acc + (tv.cost || 0), 0);
                   const primaryStatus = receipt.tvs[0]?.status || 'Pending';
                   const primaryPriority = receipt.tvs[0]?.priority || 'Normal';
-                  const primaryRack = receipt.tvs.map((t) => t.rackNo).filter(Boolean).join(', ') || '-';
+                  const primaryRack = receipt.tvs[0]?.rackNo || '-';
                   const paymentMethod = receipt.tvs[0]?.paymentMethod || 'Pending';
 
                   return (
                     <tr
-                      key={receipt._id}
+                      key={receipt._id || receipt.serialNumber}
                       className={`hover:bg-slate-50/80 transition ${
-                        isOldReceipt ? 'bg-amber-50/60 font-semibold' : ''
+                        isOldReceipt ? 'bg-amber-50/30' : ''
                       }`}
                     >
-                      {/* Receipt No */}
-                      <td className="py-3 px-4 font-mono font-extrabold text-slate-900">
-                        <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200">
-                          {receipt.serialNumber}
-                        </span>
+                      {/* Serial */}
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                        {receipt.serialNumber}
                       </td>
 
                       {/* Customer */}
-                      <td className="py-3 px-4 font-bold text-slate-900">{receipt.customerName}</td>
-
-                      {/* Mobile */}
-                      <td className="py-3 px-4 font-mono text-slate-700">{receipt.mobileNumber}</td>
-
-                      {/* Received Date */}
-                      <td className="py-3 px-4 text-slate-600">{receipt.receivedDate}</td>
-
-                      {/* TV Brand & Model */}
                       <td className="py-3 px-4">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-slate-900">
-                            {receipt.tvs.map((t) => `${t.brand} (${t.size || 'TV'})`).join(', ')}
-                          </span>
-                          <span className="text-[10px] text-slate-500 truncate max-w-[180px]">
-                            {receipt.tvs.map((t) => t.modelNumber || 'Std').join(', ')}
-                          </span>
-                        </div>
+                        <div className="font-bold text-slate-900">{receipt.customerName}</div>
+                        <div className="text-[11px] font-mono text-slate-500">{receipt.mobileNumber}</div>
                       </td>
 
-                      {/* Repair By */}
-                      <td className="py-3 px-4 text-slate-700">{receipt.repairBy || 'Workshop'}</td>
+                      {/* TV details */}
+                      <td className="py-3 px-4">
+                        {receipt.tvs.map((tv, idx) => (
+                          <div key={idx} className="leading-tight mb-1 last:mb-0">
+                            <span className="font-extrabold text-slate-900">{tv.brand}</span>
+                            {tv.size && <span className="text-slate-500 text-[11px]"> ({tv.size})</span>}
+                            {tv.modelNumber && (
+                              <div className="text-[10px] text-slate-400 font-mono">{tv.modelNumber}</div>
+                            )}
+                          </div>
+                        ))}
+                      </td>
+
+                      {/* Complaint */}
+                      <td className="py-3 px-4 truncate max-w-[150px]" title={receipt.tvs.map((t) => t.complaint).join(', ')}>
+                        {receipt.tvs.map((t) => t.complaint).join(', ')}
+                      </td>
+
+                      {/* Technician */}
+                      <td className="py-3 px-4 text-slate-700 font-semibold">{receipt.repairBy || '-'}</td>
 
                       {/* Priority */}
                       <td className="py-3 px-4">
                         <span
-                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                             primaryPriority === 'Urgent'
-                              ? 'bg-red-100 text-red-800 border border-red-300 animate-pulse'
+                              ? 'bg-red-100 text-red-900 border border-red-300'
                               : primaryPriority === 'High'
-                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              ? 'bg-orange-100 text-orange-900 border border-orange-300'
                               : 'bg-slate-100 text-slate-700'
                           }`}
                         >
@@ -491,6 +488,10 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                               ? 'bg-blue-100 text-blue-900 border-blue-300'
                               : primaryStatus === 'Ready'
                               ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                              : primaryStatus === 'Return'
+                              ? 'bg-purple-100 text-purple-900 border-purple-300'
+                              : primaryStatus === 'Reject'
+                              ? 'bg-rose-100 text-rose-900 border-rose-300'
                               : 'bg-slate-800 text-slate-100 border-slate-700'
                           }`}
                         >
@@ -498,7 +499,7 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                         </span>
                       </td>
 
-                      {/* Days Elapsed & Old Receipt Highlight */}
+                      {/* Days Elapsed */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-slate-700">{daysSinceReceived}d</span>
@@ -515,19 +516,19 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                         {receipt.remarks || '-'}
                       </td>
 
-                      {/* Actions (Section 11) */}
+                      {/* Actions */}
                       <td className="py-3 px-4 text-center sticky right-0 bg-white shadow-l z-10">
                         <div className="flex items-center justify-center gap-1">
-                          {/* Update */}
+                          {/* Edit */}
                           <button
                             onClick={() => onUpdate(receipt)}
                             className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                            title="Update Receipt"
+                            title="Edit / Update Receipt"
                           >
                             <Edit className="w-4 h-4" />
                           </button>
 
-                          {/* Print Normal Receipt */}
+                          {/* Print A4 */}
                           <button
                             onClick={() => onPrintA4(receipt)}
                             className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
@@ -545,16 +546,16 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                             <FileText className="w-4 h-4" />
                           </button>
 
-                          {/* WhatsApp (Section 17) */}
+                          {/* WhatsApp */}
                           <button
                             onClick={() => handleWhatsApp(receipt)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                            title="Send WhatsApp Message"
+                            title="Send WhatsApp Message (Half / Full Detail)"
                           >
                             <MessageCircle className="w-4 h-4" />
                           </button>
 
-                          {/* Sticker Print (Section 18 & 19) */}
+                          {/* Sticker Print */}
                           <button
                             onClick={() => onPrintSticker(receipt)}
                             className="p-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition cursor-pointer"
@@ -619,6 +620,121 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
         onConfirm={handleConfirmDelete}
         onCancel={() => setReceiptToDelete(null)}
       />
+
+      {/* WhatsApp Share Options Modal (Half Detail vs Full Detail) */}
+      {whatsAppReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 bg-emerald-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <MessageCircle className="w-5 h-5 text-white" />
+                <div>
+                  <h3 className="text-base font-extrabold">WhatsApp Share Receipt</h3>
+                  <p className="text-xs text-emerald-100">
+                    {whatsAppReceipt.customerName} ({whatsAppReceipt.mobileNumber})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setWhatsAppReceipt(null)}
+                className="text-emerald-100 hover:text-white p-1 rounded-lg transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-600 font-medium">
+                Customer ko kis tarah ka WhatsApp message bhejna chahte hain? Neeche option select karein:
+              </p>
+
+              {/* Option Selection Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Half Detail */}
+                <button
+                  type="button"
+                  onClick={() => setWhatsAppMode('half')}
+                  className={`p-4 rounded-2xl border-2 text-left transition cursor-pointer ${
+                    whatsAppMode === 'half'
+                      ? 'border-emerald-600 bg-emerald-50/70 shadow-sm'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-extrabold text-sm text-slate-900">1. Half Detail</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      संक्षिप्त
+                    </span>
+                  </div>
+                  <ul className="text-xs text-slate-600 space-y-1">
+                    <li>✓ Receipt No & Customer Name</li>
+                    <li>✓ Mobile Number</li>
+                    <li>✓ Material Detail (TV Model)</li>
+                    <li>✓ Shop Notice & Live Link</li>
+                  </ul>
+                </button>
+
+                {/* 2. Full Detail */}
+                <button
+                  type="button"
+                  onClick={() => setWhatsAppMode('full')}
+                  className={`p-4 rounded-2xl border-2 text-left transition cursor-pointer ${
+                    whatsAppMode === 'full'
+                      ? 'border-emerald-600 bg-emerald-50/70 shadow-sm'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-extrabold text-sm text-slate-900">2. Full Detail</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+                      सम्पूर्ण
+                    </span>
+                  </div>
+                  <ul className="text-xs text-slate-600 space-y-1">
+                    <li>✓ All TV Units & Fault Details</li>
+                    <li>✓ Repair Status & Technician</li>
+                    <li>✓ Estimated & Final Cost</li>
+                    <li>✓ Received / Revise / Out Dates</li>
+                    <li>✓ Shop Notice & Live Link</li>
+                  </ul>
+                </button>
+              </div>
+
+              {/* Message Summary Preview */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1.5">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                  Message Format ({whatsAppMode === 'half' ? 'Half Detail' : 'Full Detail'}):
+                </span>
+                <p className="font-mono text-[11px] text-slate-700 whitespace-pre-line leading-relaxed max-h-36 overflow-y-auto p-2 bg-white rounded border border-slate-100">
+                  {whatsAppMode === 'half'
+                    ? `📺 KRUTI ELECTRONICS\nReceipt No : ${whatsAppReceipt.serialNumber}\nCustomer : ${whatsAppReceipt.customerName}\nPhone : ${whatsAppReceipt.mobileNumber}\nMaterial : ${whatsAppReceipt.tvs.map((t) => `${t.brand} ${t.size}`).join(', ')}\n🔍 Live Link: Check Status Online\n📢 Notice: Collect within 20 days`
+                    : `📺 KRUTI ELECTRONICS\nReceipt No : ${whatsAppReceipt.serialNumber}\nCustomer : ${whatsAppReceipt.customerName}\nPhone : ${whatsAppReceipt.mobileNumber}\nDate : ${whatsAppReceipt.receivedDate}${whatsAppReceipt.revisedDate ? ` | Revise: ${whatsAppReceipt.revisedDate}` : ''}${whatsAppReceipt.outDate ? ` | Out: ${whatsAppReceipt.outDate}` : ''}\nTVs : ${whatsAppReceipt.tvs.map((t) => `${t.brand} ${t.size} - ${t.complaint} (${t.status})`).join('; ')}\nEst. Cost : ₹${whatsAppReceipt.tvs.reduce((acc, t) => acc + (t.estimatedCost || 0), 0)}\n🔍 Live Link: Check Status Online\n📢 Notice: Collect within 20 days`}
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setWhatsAppReceipt(null)}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSendWhatsApp(whatsAppReceipt, whatsAppMode)}
+                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-2 cursor-pointer transition"
+              >
+                <MessageCircle className="w-4 h-4" /> Send {whatsAppMode === 'half' ? 'Half Detail' : 'Full Detail'} on WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

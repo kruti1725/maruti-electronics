@@ -14,9 +14,28 @@ import { IUser } from './types/user';
 import { IReceipt } from './types/receipt';
 
 export default function App() {
+  const [initialSerial, setInitialSerial] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const querySerial = searchParams.get('serial');
+      if (querySerial) return querySerial;
+      const pathMatch = window.location.pathname.match(/^\/(?:track|receipt|receipts)\/([a-zA-Z0-9_-]+)/i);
+      if (pathMatch && pathMatch[1] && pathMatch[1] !== 'mobile') {
+        return pathMatch[1];
+      }
+    }
+    return '';
+  });
+
   const [currentPath, setCurrentPath] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return window.location.pathname || '/';
+      const searchParams = new URLSearchParams(window.location.search);
+      const serial = searchParams.get('serial');
+      const path = window.location.pathname || '/';
+      if (serial || path.startsWith('/track') || path.startsWith('/receipt')) {
+        return '/search-receipt';
+      }
+      return path;
     }
     return '/';
   });
@@ -31,18 +50,24 @@ export default function App() {
   // Edit receipt state
   const [editingReceipt, setEditingReceipt] = useState<IReceipt | null>(null);
 
-  // Serial from URL query (?serial=KR00101)
-  const [initialSerial, setInitialSerial] = useState<string>('');
-
   // Synchronize browser history and path changes
   const navigate = (path: string) => {
     window.history.pushState({}, '', path);
-    setCurrentPath(path.split('?')[0]);
+    const cleanPath = path.split('?')[0];
 
     // Parse search params if any
     const searchParams = new URLSearchParams(window.location.search);
     const serial = searchParams.get('serial') || '';
-    if (serial) setInitialSerial(serial);
+    if (serial) {
+      setInitialSerial(serial);
+      setCurrentPath('/search-receipt');
+    } else if (cleanPath.startsWith('/track') || cleanPath.startsWith('/receipt')) {
+      const pathMatch = cleanPath.match(/^\/(?:track|receipt|receipts)\/([a-zA-Z0-9_-]+)/i);
+      if (pathMatch && pathMatch[1]) setInitialSerial(pathMatch[1]);
+      setCurrentPath('/search-receipt');
+    } else {
+      setCurrentPath(cleanPath);
+    }
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -50,48 +75,62 @@ export default function App() {
   // Listen to popstate (back/forward navigation)
   useEffect(() => {
     const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
       const searchParams = new URLSearchParams(window.location.search);
       const serial = searchParams.get('serial') || '';
-      if (serial) setInitialSerial(serial);
+      const path = window.location.pathname || '/';
+
+      if (serial) {
+        setInitialSerial(serial);
+        setCurrentPath('/search-receipt');
+      } else if (path.startsWith('/track') || path.startsWith('/receipt')) {
+        const pathMatch = path.match(/^\/(?:track|receipt|receipts)\/([a-zA-Z0-9_-]+)/i);
+        if (pathMatch && pathMatch[1]) setInitialSerial(pathMatch[1]);
+        setCurrentPath('/search-receipt');
+      } else {
+        setCurrentPath(path);
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
-
-    // Initial query check
-    const searchParams = new URLSearchParams(window.location.search);
-    const serial = searchParams.get('serial') || '';
-    if (serial) setInitialSerial(serial);
-
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Check auth session
+  // Check auth session: only authenticate if valid admin token exists
   useEffect(() => {
     const checkAuth = async () => {
-      // 1. Check local session first
-      try {
-        const stored = localStorage.getItem('kruti_auth_user');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed && parsed.email) {
-            setUser(parsed);
-          }
-        }
-      } catch {}
+      const stored = localStorage.getItem('kruti_auth_user');
+      const token = localStorage.getItem('kruti_auth_token');
 
-      // 2. Also verify with backend if available
+      if (!stored || !token) {
+        setUser(null);
+        setAuthChecked(true);
+        return;
+      }
+
       try {
-        const res = await fetch('/api/auth/me');
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.email) {
+          setUser(parsed);
+        }
+      } catch {
+        setUser(null);
+      }
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-admin-auth': 'true',
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.success && data.user) {
             setUser(data.user);
-            localStorage.setItem('kruti_auth_user', JSON.stringify(data.user));
           }
         }
       } catch (e) {
-        console.warn('Backend session check skipped, keeping local state:', e);
+        // Keep offline session
       } finally {
         setAuthChecked(true);
       }
@@ -109,6 +148,7 @@ export default function App() {
     } finally {
       try {
         localStorage.removeItem('kruti_auth_user');
+        localStorage.removeItem('kruti_auth_token');
       } catch {}
       setUser(null);
       navigate('/');
@@ -132,7 +172,6 @@ export default function App() {
 
   // Render current view
   const renderContent = () => {
-    // If accessing admin route without authentication, show login
     if (isAdminRoute && !user) {
       return (
         <LoginPage
@@ -147,10 +186,7 @@ export default function App() {
 
     if (currentPath === '/login') {
       if (user) {
-        // already logged in, redirect to dashboard
-        return (
-          <DashboardCards onNavigate={(path) => navigate(path)} />
-        );
+        return <DashboardCards onNavigate={(path) => navigate(path)} />;
       }
       return (
         <LoginPage
@@ -215,13 +251,11 @@ export default function App() {
       );
     }
 
-    // Default route: Home Page
     return <HomePage onNavigate={(path) => navigate(path)} />;
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-red-600 selection:text-white">
-      {/* Navigation Bar */}
       <Navbar
         currentPath={currentPath}
         onNavigate={navigate}
@@ -229,13 +263,10 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* Main Content */}
       <main className="flex-1">{renderContent()}</main>
 
-      {/* Footer */}
       <Footer onNavigate={navigate} />
 
-      {/* A4 Printable Receipt & PDF Modal */}
       {activeA4Receipt && (
         <PrintReceipt
           receipt={activeA4Receipt}
@@ -244,7 +275,6 @@ export default function App() {
         />
       )}
 
-      {/* 50mm x 25mm Thermal Sticker Print Modal */}
       {activeStickerReceipt && (
         <StickerPrint
           receipt={activeStickerReceipt}

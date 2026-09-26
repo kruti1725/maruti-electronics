@@ -7,7 +7,7 @@ export const tvItemSchema = z.object({
   complaint: z.string().trim().min(1, 'Complaint description is required'),
   estimatedCost: z.coerce.number().min(0, 'Estimated cost must be 0 or higher').default(0),
   cost: z.coerce.number().min(0, 'Actual cost must be 0 or higher').default(0),
-  status: z.enum(['Pending', 'Under Repair', 'Ready', 'Delivered']),
+  status: z.enum(['Pending', 'Under Repair', 'Ready', 'Delivered', 'Return', 'Reject']),
   priority: z.enum(['Normal', 'High', 'Urgent']).default('Normal'),
   rackNo: z.string().trim().default(''),
   paymentMethod: z.enum(['Cash', 'UPI', 'Card', 'Pending', 'Bank Transfer']).default('Pending'),
@@ -25,6 +25,8 @@ export const receiptSchema = z.object({
     .trim()
     .regex(/^[0-9]{10}$/, 'Mobile number must be exactly 10 digits'),
   receivedDate: z.string().min(1, 'Received date is required'),
+  revisedDate: z.string().trim().default(''),
+  outDate: z.string().trim().default(''),
   repairBy: z.string().trim().default(''),
   remarks: z.string().trim().default(''),
   tvs: z.array(tvItemSchema).min(1, 'At least one TV must be added to the receipt'),

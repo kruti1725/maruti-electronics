@@ -1,4 +1,4 @@
-export type TVStatus = 'Pending' | 'Under Repair' | 'Ready' | 'Delivered';
+export type TVStatus = 'Pending' | 'Under Repair' | 'Ready' | 'Delivered' | 'Return' | 'Reject';
 export type TVPriority = 'Normal' | 'High' | 'Urgent';
 export type PaymentMethod = 'Cash' | 'UPI' | 'Card' | 'Pending' | 'Bank Transfer';
 
@@ -22,6 +22,8 @@ export interface IReceipt {
   customerName: string;
   mobileNumber: string;
   receivedDate: string;
+  revisedDate?: string;
+  outDate?: string;
   repairBy: string;
   remarks: string;
   tvs: TVItem[];
@@ -36,6 +38,8 @@ export interface DashboardStats {
   underRepair: number;
   ready: number;
   delivered: number;
+  returned?: number;
+  rejected?: number;
   todayReceipts: number;
   oldReceipts: number;
   urgentReceipts: number;
