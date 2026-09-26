@@ -155,7 +155,7 @@ export const PrintReceipt: React.FC<PrintReceiptProps> = ({ receipt, isOpen, onC
                       <MapPin className="w-3.5 h-3.5 text-red-600 shrink-0" /> Station Road, Near Electronics Market, Gujarat
                     </p>
                     <p className="flex items-center gap-1.5">
-                      <Phone className="w-3.5 h-3.5 text-red-600 shrink-0" /> Helpline: +91 85112 96117 / +91 98765 43210
+                      <Phone className="w-3.5 h-3.5 text-red-600 shrink-0" /> Helpline: +91 99045 88634
                     </p>
                   </div>
                 </div>
