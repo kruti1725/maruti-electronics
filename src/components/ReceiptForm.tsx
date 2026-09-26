@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Save, ArrowLeft, Tv, AlertCircle, CheckCircle2, RotateCcw } from 'lucide-react';
-import { IReceipt, TVItem, TVStatus, TVPriority, PaymentMethod } from '../types/receipt';
+import {
+  Plus,
+  Trash2,
+  Save,
+  ArrowLeft,
+  Tv,
+  AlertCircle,
+  CheckCircle2,
+  RotateCcw,
+  RefreshCw,
+  Hash,
+  Sparkles,
+} from 'lucide-react';
+import { IReceipt, TVStatus, TVPriority, PaymentMethod } from '../types/receipt';
 import { receiptSchema } from '../lib/validation';
 import { saveClientReceipt, updateClientReceipt } from '../lib/client-storage';
 
@@ -11,26 +23,29 @@ interface ReceiptFormProps {
   onCancel?: () => void;
 }
 
+export interface TVReceiptEntry {
+  id: string;
+  serialNumber: string; // Har TV ka apna alag receipt number
+  brand: string;
+  modelNumber: string;
+  size: string;
+  complaint: string;
+  estimatedCost: number;
+  cost: number;
+  status: TVStatus;
+  priority: TVPriority;
+  rackNo: string;
+  paymentMethod: PaymentMethod;
+  repairBy: string; // Technician
+  revisedDate: string; // Revise Date
+  outDate: string; // Out Date
+  remarks: string; // Accessories / Notes
+}
+
 const COMMON_BRANDS = [
-  'Sony',
-  'Samsung',
-  'LG',
-  'Mi (Xiaomi)',
-  'OnePlus',
-  'TCL',
-  'Panasonic',
-  'Realme',
-  'Vu',
-  'Videocon',
-  'Sansui',
-  'Haier',
-  'Micromax',
-  'Philips',
-  'Thomson',
-  'Kodak',
-  'Intex',
-  'BPL',
-  'Other',
+  'Sony', 'Samsung', 'LG', 'Mi (Xiaomi)', 'OnePlus', 'TCL', 'Panasonic',
+  'Realme', 'Vu', 'Videocon', 'Sansui', 'Haier', 'Micromax', 'Philips',
+  'Thomson', 'Kodak', 'Intex', 'BPL', 'Other',
 ];
 
 const COMMON_COMPLAINTS = [
@@ -47,7 +62,9 @@ const COMMON_COMPLAINTS = [
   'Wi-Fi / Smart Apps Crashing',
 ];
 
-const TV_SIZES = ['24 inch', '32 inch', '40 inch', '43 inch', '50 inch', '55 inch', '65 inch', '75 inch', 'Other'];
+const TV_SIZES = [
+  '24 inch', '32 inch', '40 inch', '43 inch', '50 inch', '55 inch', '65 inch', '75 inch', 'Other',
+];
 
 const TECHNICIANS = [
   'Manoj',
@@ -60,6 +77,19 @@ const TECHNICIANS = [
   'Rohit',
 ];
 
+function generateNextSerialNumber(prevSerial?: string): string {
+  if (prevSerial) {
+    const match = prevSerial.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const numStr = match[2];
+      const nextNum = parseInt(numStr, 10) + 1;
+      return `${prefix}${String(nextNum).padStart(numStr.length, '0')}`;
+    }
+  }
+  return 'KR' + Math.floor(10000 + Math.random() * 89900);
+}
+
 export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   initialData,
   isEditMode = false,
@@ -68,7 +98,9 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
 }) => {
   const getTodayDate = () => new Date().toISOString().split('T')[0];
 
-  const createBlankTV = (): TVItem => ({
+  const createBlankTV = (customSerial?: string): TVReceiptEntry => ({
+    id: 'tv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    serialNumber: customSerial || generateNextSerialNumber(),
     brand: 'Sony',
     modelNumber: '',
     size: '43 inch',
@@ -79,38 +111,80 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     priority: 'Normal',
     rackNo: '',
     paymentMethod: 'Pending',
+    repairBy: '',
+    revisedDate: '',
+    outDate: '',
+    remarks: '',
   });
 
-  const [serialNumber, setSerialNumber] = useState(
-    initialData?.serialNumber || 'KR' + Math.floor(10000 + Math.random() * 90000)
-  );
+  // Customer Information (Shared across all TVs)
   const [customerName, setCustomerName] = useState(initialData?.customerName || '');
   const [mobileNumber, setMobileNumber] = useState(initialData?.mobileNumber || '');
   const [receivedDate, setReceivedDate] = useState(initialData?.receivedDate || getTodayDate());
-  const [revisedDate, setRevisedDate] = useState(initialData?.revisedDate || '');
-  const [outDate, setOutDate] = useState(initialData?.outDate || '');
-  const [repairBy, setRepairBy] = useState(initialData?.repairBy || '');
-  const [remarks, setRemarks] = useState(initialData?.remarks || '');
-  const [tvs, setTvs] = useState<TVItem[]>(
-    initialData?.tvs && initialData.tvs.length > 0 ? initialData.tvs : [createBlankTV()]
-  );
+
+  // Individual TV Units with separate receipt numbers
+  const [tvs, setTvs] = useState<TVReceiptEntry[]>(() => {
+    if (initialData) {
+      if (initialData.tvs && initialData.tvs.length > 0) {
+        return initialData.tvs.map((tv, idx) => ({
+          id: tv._id || `init_tv_${idx}`,
+          serialNumber: idx === 0 ? initialData.serialNumber : `${initialData.serialNumber}-${idx + 1}`,
+          brand: tv.brand || 'Sony',
+          modelNumber: tv.modelNumber || '',
+          size: tv.size || '43 inch',
+          complaint: tv.complaint || 'No Display / Black Screen',
+          estimatedCost: tv.estimatedCost || 0,
+          cost: tv.cost || 0,
+          status: tv.status || 'Pending',
+          priority: tv.priority || 'Normal',
+          rackNo: tv.rackNo || '',
+          paymentMethod: tv.paymentMethod || 'Pending',
+          repairBy: initialData.repairBy || '',
+          revisedDate: initialData.revisedDate || '',
+          outDate: initialData.outDate || '',
+          remarks: initialData.remarks || '',
+        }));
+      }
+      return [
+        {
+          ...createBlankTV(initialData.serialNumber),
+          repairBy: initialData.repairBy || '',
+          revisedDate: initialData.revisedDate || '',
+          outDate: initialData.outDate || '',
+          remarks: initialData.remarks || '',
+        },
+      ];
+    }
+    return [createBlankTV('KR' + Math.floor(10000 + Math.random() * 89900))];
+  });
 
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // TV management
+  // Add another TV / Receipt
   const handleAddTV = () => {
-    setTvs([...tvs, createBlankTV()]);
+    const lastSerial = tvs[tvs.length - 1]?.serialNumber;
+    const nextSerial = generateNextSerialNumber(lastSerial);
+    const lastTv = tvs[tvs.length - 1];
+
+    const newTV: TVReceiptEntry = {
+      ...createBlankTV(nextSerial),
+      repairBy: lastTv?.repairBy || '',
+      revisedDate: lastTv?.revisedDate || '',
+    };
+    setTvs([...tvs, newTV]);
   };
 
+  // Remove TV
   const handleRemoveTV = (index: number) => {
     if (tvs.length <= 1) return;
     setTvs(tvs.filter((_, i) => i !== index));
   };
 
-  const handleTVChange = (index: number, field: keyof TVItem, value: any) => {
+  // Field change
+  const handleTVChange = (index: number, field: keyof TVReceiptEntry, value: any) => {
     const updated = [...tvs];
     updated[index] = {
       ...updated[index],
@@ -119,23 +193,25 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     setTvs(updated);
   };
 
+  // Regenerate serial number
+  const handleRegenerateSerial = (index: number) => {
+    const newSerial = 'KR' + Math.floor(10000 + Math.random() * 89900);
+    handleTVChange(index, 'serialNumber', newSerial);
+  };
+
   const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
     setMobileNumber(cleaned);
   };
 
   const resetForm = () => {
-    setSerialNumber('KR' + Math.floor(10000 + Math.random() * 90000));
     setCustomerName('');
     setMobileNumber('');
     setReceivedDate(getTodayDate());
-    setRevisedDate('');
-    setOutDate('');
-    setRepairBy('');
-    setRemarks('');
-    setTvs([createBlankTV()]);
+    setTvs([createBlankTV('KR' + Math.floor(10000 + Math.random() * 89900))]);
     setErrors({});
     setServerError(null);
+    setSuccessMessage(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -144,66 +220,146 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     setServerError(null);
     setSuccessMessage(null);
 
-    const formData = {
-      serialNumber: serialNumber.trim().toUpperCase(),
-      customerName: customerName.trim(),
-      mobileNumber: mobileNumber.trim(),
-      receivedDate,
-      revisedDate: revisedDate.trim(),
-      outDate: outDate.trim(),
-      repairBy: repairBy.trim(),
-      remarks: remarks.trim(),
-      tvs,
-    };
+    // Validate customer fields
+    const fieldErrors: Record<string, string> = {};
+    if (!customerName.trim() || customerName.trim().length < 2) {
+      fieldErrors.customerName = 'Customer name is required (min 2 characters)';
+    }
+    if (!mobileNumber.trim() || mobileNumber.trim().length !== 10) {
+      fieldErrors.mobileNumber = 'Mobile number must be exactly 10 digits';
+    }
+    if (!receivedDate) {
+      fieldErrors.receivedDate = 'Received date is required';
+    }
 
-    // Client-side Zod validation
-    const parsed = receiptSchema.safeParse(formData);
-    if (!parsed.success) {
-      const fieldErrors: Record<string, string> = {};
-      parsed.error.issues.forEach((issue) => {
-        const path = issue.path.join('.');
-        fieldErrors[path] = issue.message;
-      });
+    // Validate each TV and check duplicate serial numbers
+    const serialSet = new Set<string>();
+    tvs.forEach((tv, idx) => {
+      const s = tv.serialNumber.trim().toUpperCase();
+      if (!s) {
+        fieldErrors[`tv_${idx}_serial`] = `Receipt number is required for TV #${idx + 1}`;
+      } else if (serialSet.has(s)) {
+        fieldErrors[`tv_${idx}_serial`] = `Duplicate Receipt #${s}. Every TV must have a unique receipt number.`;
+      } else {
+        serialSet.add(s);
+      }
+
+      if (!tv.brand.trim()) {
+        fieldErrors[`tv_${idx}_brand`] = `Brand is required for TV #${idx + 1}`;
+      }
+      if (!tv.complaint.trim()) {
+        fieldErrors[`tv_${idx}_complaint`] = `Complaint is required for TV #${idx + 1}`;
+      }
+    });
+
+    if (Object.keys(fieldErrors).length > 0) {
       setErrors(fieldErrors);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
+    // Prepare each TV as its own separate receipt
+    const receiptsToSave = tvs.map((tv) => ({
+      serialNumber: tv.serialNumber.trim().toUpperCase(),
+      customerName: customerName.trim(),
+      mobileNumber: mobileNumber.trim(),
+      receivedDate,
+      revisedDate: (tv.revisedDate || '').trim(),
+      outDate: (tv.outDate || '').trim(),
+      repairBy: (tv.repairBy || '').trim(),
+      remarks: (tv.remarks || '').trim(),
+      tvs: [
+        {
+          brand: tv.brand.trim(),
+          modelNumber: (tv.modelNumber || '').trim(),
+          size: (tv.size || '').trim(),
+          complaint: tv.complaint.trim(),
+          estimatedCost: Number(tv.estimatedCost) || 0,
+          cost: Number(tv.cost) || 0,
+          status: tv.status || 'Pending',
+          priority: tv.priority || 'Normal',
+          rackNo: (tv.rackNo || '').trim(),
+          paymentMethod: tv.paymentMethod || 'Pending',
+        },
+      ],
+    }));
+
+    for (const r of receiptsToSave) {
+      const parsed = receiptSchema.safeParse(r);
+      if (!parsed.success) {
+        setServerError(`Validation error on ${r.serialNumber}: ${parsed.error.issues[0]?.message}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
-      const url = isEditMode
-        ? `/api/receipts/${encodeURIComponent(initialData!.serialNumber)}`
-        : '/api/receipts';
-      const method = isEditMode ? 'PUT' : 'POST';
+      if (isEditMode) {
+        const singleReceipt = receiptsToSave[0];
+        const targetSerial = initialData!.serialNumber;
+        const res = await fetch(`/api/receipts/${encodeURIComponent(targetSerial)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(singleReceipt),
+        });
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data.success && data.receipt) {
-        setSuccessMessage(isEditMode ? 'Receipt Updated Successfully!' : 'Receipt Saved to MongoDB Atlas Successfully!');
-        if (!isEditMode) {
-          resetForm();
-        }
-        if (isEditMode && initialData) {
-          try { updateClientReceipt(initialData.serialNumber, data.receipt); } catch {}
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success && data.receipt) {
+          setSuccessMessage(`Receipt ${data.receipt.serialNumber} Updated Successfully!`);
+          try {
+            updateClientReceipt(targetSerial, data.receipt);
+          } catch {}
+          onSuccess(data.receipt);
+          return;
         } else {
-          try { saveClientReceipt(data.receipt); } catch {}
+          throw new Error(data.error || 'Server error updating receipt.');
         }
-        onSuccess(data.receipt);
-        return;
       } else {
-        throw new Error(data.error || 'Server error: Failed to save receipt to MongoDB Atlas.');
+        // Create each receipt (Har TV ka alag receipt document save hoga)
+        const createdList: IReceipt[] = [];
+
+        for (let i = 0; i < receiptsToSave.length; i++) {
+          const item = receiptsToSave[i];
+          const res = await fetch('/api/receipts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item),
+          });
+
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.success || !data.receipt) {
+            throw new Error(
+              data.error || `Failed to save receipt ${item.serialNumber}. Kripya check karein.`
+            );
+          }
+
+          const created: IReceipt = data.receipt;
+          createdList.push(created);
+
+          try {
+            saveClientReceipt(created);
+          } catch {}
+        }
+
+        const serialsList = createdList.map((r) => r.serialNumber).join(', ');
+        setSuccessMessage(
+          `Successfully created ${createdList.length} Receipt${
+            createdList.length > 1 ? 's' : ''
+          } (${serialsList}) for ${customerName}!`
+        );
+
+        resetForm();
+        onSuccess(createdList[0]);
+        return;
       }
     } catch (err: any) {
       setServerError(
-        err.message || 'MongoDB Atlas se connection fail ho gaya. Kripya check karein ki Vercel par MONGODB_URI set hai aur Network Access 0.0.0.0/0 allowed hai.'
+        err.message ||
+          'MongoDB Atlas se connection fail ho gaya. Kripya check karein ki Vercel par MONGODB_URI set hai aur Network Access 0.0.0.0/0 allowed hai.'
       );
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setLoading(false);
     }
@@ -226,12 +382,12 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
             <span className="p-2.5 rounded-2xl bg-red-50 text-red-600">
               <Tv className="w-7 h-7" />
             </span>
-            {isEditMode ? `Update Receipt (${serialNumber})` : 'New Repair Receipt'}
+            {isEditMode ? `Update Receipt (${initialData?.serialNumber})` : 'New Repair Receipt'}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             {isEditMode
-              ? 'Modify customer details, technicians, TV units, or payment statuses.'
-              : 'Generate an official TV repair job card with multi-TV support and sticker barcode.'}
+              ? 'Modify TV details, repair status, technician, or cost.'
+              : 'Ek hi baar me customer ke multiple TVs add karein. Har TV ka alag receipt number banega aur All Receipts me alag-alag dikhega.'}
           </p>
         </div>
 
@@ -246,62 +402,42 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
         )}
       </div>
 
-      {/* Success banner */}
-      {successMessage && (
-        <div className="mb-6 p-4 bg-emerald-50 border-2 border-emerald-300 text-emerald-900 rounded-2xl flex items-center gap-3 animate-in fade-in">
-          <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
-          <div>
-            <p className="font-bold text-sm">{successMessage}</p>
-            <p className="text-xs text-emerald-700">
-              The receipt has been recorded in the database. You can print stickers or send WhatsApp from the All Receipts table.
-            </p>
+      {/* Notifications */}
+      {serverError && (
+        <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-2xl flex items-start gap-3 text-red-700">
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+          <div className="text-sm">
+            <span className="font-bold">Error: </span>
+            {serverError}
           </div>
         </div>
       )}
 
-      {/* Server error */}
-      {serverError && (
-        <div className="mb-6 p-4 bg-red-50 border-2 border-red-300 text-red-900 rounded-2xl flex items-center gap-3 animate-in fade-in">
-          <AlertCircle className="w-6 h-6 text-red-600 shrink-0" />
-          <div>
-            <p className="font-bold text-sm">Failed to save receipt</p>
-            <p className="text-xs text-red-700">{serverError}</p>
-          </div>
+      {successMessage && (
+        <div className="mb-6 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl flex items-start gap-3 text-emerald-800">
+          <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 text-emerald-600" />
+          <div className="text-sm font-semibold">{successMessage}</div>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Section 1: Customer & General Information */}
+        {/* Section 1: Customer Information */}
         <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 p-6 sm:p-8">
-          <div className="border-b border-slate-100 pb-4 mb-6">
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              1. Customer & Workshop Details
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Unique Serial Number is auto-assigned. Enter customer contact information.
-            </p>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                1. Customer Information
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Customer name aur mobile number sabhi TVs ke liye same rahega.
+              </p>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 bg-slate-100 text-slate-600 rounded-lg">
+              Step 1 of 2
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Serial Number */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Serial Number <span className="text-red-600">*</span>
-              </label>
-              <input
-                type="text"
-                value={serialNumber}
-                onChange={(e) => setSerialNumber(e.target.value.toUpperCase())}
-                placeholder="KR00101"
-                className={`w-full px-4 py-3 bg-slate-100 border-2 rounded-xl text-slate-900 font-mono font-bold focus:bg-white focus:outline-none transition ${
-                  errors.serialNumber ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
-                }`}
-              />
-              {errors.serialNumber && (
-                <p className="text-xs text-red-600 mt-1 font-medium">{errors.serialNumber}</p>
-              )}
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {/* Customer Name */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
@@ -311,7 +447,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="Full Name (e.g. Rahul Patel)"
+                placeholder="e.g. Rahul Patel"
                 className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition ${
                   errors.customerName ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
                 }`}
@@ -327,16 +463,16 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                 Mobile Number (10 Digits) <span className="text-red-600">*</span>
               </label>
               <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 font-bold text-sm pointer-events-none">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">
                   +91
                 </span>
                 <input
-                  type="text"
+                  type="tel"
+                  maxLength={10}
                   value={mobileNumber}
                   onChange={handleMobileChange}
                   placeholder="9876543210"
-                  maxLength={10}
-                  className={`w-full pl-12 pr-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-mono font-bold focus:bg-white focus:outline-none transition ${
+                  className={`w-full pl-14 pr-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-mono font-medium focus:bg-white focus:outline-none transition ${
                     errors.mobileNumber ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
                   }`}
                 />
@@ -363,119 +499,103 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                 <p className="text-xs text-red-600 mt-1 font-medium">{errors.receivedDate}</p>
               )}
             </div>
-
-            {/* Revise Date */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Revise Date (Expected)
-              </label>
-              <input
-                type="date"
-                value={revisedDate}
-                onChange={(e) => setRevisedDate(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
-              />
-            </div>
-
-            {/* Out Date */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Out Date (Delivery)
-              </label>
-              <input
-                type="date"
-                value={outDate}
-                onChange={(e) => setOutDate(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
-              />
-            </div>
-
-            {/* Repair By (Technician Dropdown) */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Repair Handled By
-              </label>
-              <select
-                value={repairBy}
-                onChange={(e) => setRepairBy(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
-              >
-                <option value="">-- Select Technician --</option>
-                {TECHNICIANS.map((tech) => (
-                  <option key={tech} value={tech}>
-                    {tech}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Remarks / Accessories */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Remarks / Accessories Deposited
-              </label>
-              <input
-                type="text"
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="e.g. Remote, Stand, Power Adapter"
-                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-red-600 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition"
-              />
-            </div>
           </div>
         </div>
 
-        {/* Section 2: TV List (Multiple TVs Support) */}
+        {/* Section 2: TV Units & Individual Receipts */}
         <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-6">
             <div>
               <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                2. TV Units for Repair ({tvs.length})
+                2. TV Units & Receipts ({tvs.length})
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">
+                  {tvs.length} Receipt{tvs.length > 1 ? 's' : ''}
+                </span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Add 1, 2, or multiple TVs under this single receipt.
+                Har TV ka alag receipt number rahega aur All Receipts me alag entry banegi.
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddTV}
-              className="px-4 py-2.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer border border-red-200 self-start sm:self-auto"
-            >
-              <Plus className="w-4 h-4" /> + Add Another TV
-            </button>
+            {!isEditMode && (
+              <button
+                type="button"
+                onClick={handleAddTV}
+                className="px-4 py-2.5 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer border border-red-200 self-start sm:self-auto"
+              >
+                <Plus className="w-4 h-4" /> + Add Another TV / Receipt
+              </button>
+            )}
           </div>
 
           <div className="space-y-6">
             {tvs.map((tv, idx) => (
               <div
-                key={tv._id || idx}
-                className="p-5 sm:p-6 bg-slate-50/80 rounded-2xl border-2 border-slate-200 relative transition hover:border-slate-300"
+                key={tv.id}
+                className="p-5 sm:p-6 bg-slate-50/90 rounded-2xl border-2 border-slate-200 relative transition hover:border-slate-300 shadow-xs"
               >
-                {/* TV Header Badge & Remove Button */}
-                <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-xl bg-red-600 text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+                {/* TV Header: Receipt Number & Remove */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-b border-slate-200 pb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="w-8 h-8 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shadow-xs">
                       #{idx + 1}
                     </span>
-                    <span className="text-sm font-bold text-slate-900">
-                      TV Unit {idx + 1}
-                    </span>
+                    <div>
+                      <span className="text-sm font-bold text-slate-900">
+                        TV Unit {idx + 1}
+                      </span>
+                      <span className="text-xs text-slate-500 ml-2">
+                        (Individual Receipt Card)
+                      </span>
+                    </div>
                   </div>
 
-                  {tvs.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTV(idx)}
-                      className="px-3 py-1.5 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg flex items-center gap-1 transition cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Remove TV
-                    </button>
-                  )}
+                  {/* Individual Receipt Number */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-slate-300 shadow-xs">
+                      <Hash className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="text-xs font-bold text-slate-600">Receipt No:</span>
+                      <input
+                        type="text"
+                        value={tv.serialNumber}
+                        onChange={(e) =>
+                          handleTVChange(idx, 'serialNumber', e.target.value.toUpperCase())
+                        }
+                        placeholder="KR10234"
+                        className="w-28 text-xs font-mono font-extrabold text-red-600 uppercase focus:outline-none bg-transparent"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRegenerateSerial(idx)}
+                        title="Generate New Receipt Number"
+                        className="p-1 hover:bg-slate-100 rounded-md text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {!isEditMode && tvs.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTV(idx)}
+                        className="px-2.5 py-1.5 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-100/60 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                        title="Remove this TV"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
 
+                {errors[`tv_${idx}_serial`] && (
+                  <p className="text-xs text-red-600 mb-3 font-semibold">
+                    {errors[`tv_${idx}_serial`]}
+                  </p>
+                )}
+
+                {/* TV Fields Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Brand (Typing Free Input) */}
+                  {/* Brand (Typing enabled) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Brand <span className="text-red-600">*</span>
@@ -486,13 +606,18 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                       value={tv.brand}
                       onChange={(e) => handleTVChange(idx, 'brand', e.target.value)}
                       placeholder="e.g. Sony, Samsung, LG"
-                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                      className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none transition ${
+                        errors[`tv_${idx}_brand`] ? 'border-red-500' : 'border-slate-300'
+                      }`}
                     />
                     <datalist id={`brand-suggestions-${idx}`}>
                       {COMMON_BRANDS.map((b) => (
                         <option key={b} value={b} />
                       ))}
                     </datalist>
+                    {errors[`tv_${idx}_brand`] && (
+                      <p className="text-xs text-red-600 mt-1">{errors[`tv_${idx}_brand`]}</p>
+                    )}
                   </div>
 
                   {/* Model Number */}
@@ -509,7 +634,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     />
                   </div>
 
-                  {/* Size (Typing Free Input) */}
+                  {/* Size (Typing enabled) */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       TV Size
@@ -529,43 +654,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </datalist>
                   </div>
 
-                  {/* Priority */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Priority
-                    </label>
-                    <select
-                      value={tv.priority}
-                      onChange={(e) => handleTVChange(idx, 'priority', e.target.value as TVPriority)}
-                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
-                    >
-                      <option value="Normal">Normal</option>
-                      <option value="High">High</option>
-                      <option value="Urgent">Urgent</option>
-                    </select>
-                  </div>
-
-                  {/* Complaint */}
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Complaint / Problem Description <span className="text-red-600">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      list={`complaints-list-${idx}`}
-                      value={tv.complaint}
-                      onChange={(e) => handleTVChange(idx, 'complaint', e.target.value)}
-                      placeholder="e.g. No Display, Sound Problem"
-                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
-                    />
-                    <datalist id={`complaints-list-${idx}`}>
-                      {COMMON_COMPLAINTS.map((c) => (
-                        <option key={c} value={c} />
-                      ))}
-                    </datalist>
-                  </div>
-
-                  {/* Repair Status (With Return & Reject) */}
+                  {/* Repair Status */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Repair Status <span className="text-red-600">*</span>
@@ -596,6 +685,52 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </select>
                   </div>
 
+                  {/* Complaint / Problem Description */}
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Complaint / Problem Description <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      list={`complaints-list-${idx}`}
+                      value={tv.complaint}
+                      onChange={(e) => handleTVChange(idx, 'complaint', e.target.value)}
+                      placeholder="e.g. No Display, Sound Problem, Dead"
+                      className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none transition ${
+                        errors[`tv_${idx}_complaint`] ? 'border-red-500' : 'border-slate-300'
+                      }`}
+                    />
+                    <datalist id={`complaints-list-${idx}`}>
+                      {COMMON_COMPLAINTS.map((c) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                    {errors[`tv_${idx}_complaint`] && (
+                      <p className="text-xs text-red-600 mt-1">
+                        {errors[`tv_${idx}_complaint`]}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Repair By (Technician) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Repair Handled By
+                    </label>
+                    <select
+                      value={tv.repairBy}
+                      onChange={(e) => handleTVChange(idx, 'repairBy', e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                    >
+                      <option value="">-- Select Technician --</option>
+                      {TECHNICIANS.map((tech) => (
+                        <option key={tech} value={tech}>
+                          {tech}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Rack Number */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
@@ -610,6 +745,32 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     />
                   </div>
 
+                  {/* Revise Date */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Revise Date (Expected)
+                    </label>
+                    <input
+                      type="date"
+                      value={tv.revisedDate}
+                      onChange={(e) => handleTVChange(idx, 'revisedDate', e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Out Date */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Out Date (Delivery)
+                    </label>
+                    <input
+                      type="date"
+                      value={tv.outDate}
+                      onChange={(e) => handleTVChange(idx, 'outDate', e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                    />
+                  </div>
+
                   {/* Estimated Cost */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
@@ -619,7 +780,9 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                       type="number"
                       min={0}
                       value={tv.estimatedCost}
-                      onChange={(e) => handleTVChange(idx, 'estimatedCost', Number(e.target.value))}
+                      onChange={(e) =>
+                        handleTVChange(idx, 'estimatedCost', Number(e.target.value))
+                      }
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold focus:border-red-600 focus:outline-none"
                     />
                   </div>
@@ -638,6 +801,24 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     />
                   </div>
 
+                  {/* Priority */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Priority
+                    </label>
+                    <select
+                      value={tv.priority}
+                      onChange={(e) =>
+                        handleTVChange(idx, 'priority', e.target.value as TVPriority)
+                      }
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                    >
+                      <option value="Normal">Normal</option>
+                      <option value="High">High</option>
+                      <option value="Urgent">Urgent</option>
+                    </select>
+                  </div>
+
                   {/* Payment Method */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
@@ -645,7 +826,9 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </label>
                     <select
                       value={tv.paymentMethod}
-                      onChange={(e) => handleTVChange(idx, 'paymentMethod', e.target.value as PaymentMethod)}
+                      onChange={(e) =>
+                        handleTVChange(idx, 'paymentMethod', e.target.value as PaymentMethod)
+                      }
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
                     >
                       <option value="Pending">Pending</option>
@@ -655,19 +838,58 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                       <option value="Bank Transfer">Bank Transfer</option>
                     </select>
                   </div>
+
+                  {/* Remarks / Accessories */}
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Remarks / Accessories Deposited
+                    </label>
+                    <input
+                      type="text"
+                      value={tv.remarks}
+                      onChange={(e) => handleTVChange(idx, 'remarks', e.target.value)}
+                      placeholder="e.g. Remote, Power Cable, Stand"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:border-red-600 focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {!isEditMode && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={handleAddTV}
+                className="px-5 py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-sm rounded-xl flex items-center gap-2 border border-red-200 transition cursor-pointer shadow-xs"
+              >
+                <Plus className="w-4 h-4" /> + Add Another TV / Receipt for this Customer
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Submit Actions */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-slate-200/50">
-          <p className="text-xs text-slate-500 max-w-md">
-            🔒 WhatsApp will not open automatically. You can print thermal stickers, view A4 receipt, or dispatch WhatsApp alerts from the All Receipts table anytime.
-          </p>
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-5 shadow-lg shadow-slate-200/50">
+          <div className="flex items-center gap-3">
+            <span className="p-2.5 rounded-xl bg-slate-100 text-slate-700 shrink-0">
+              <Sparkles className="w-5 h-5 text-red-600" />
+            </span>
+            <div className="text-xs text-slate-500">
+              <p className="font-bold text-slate-800 text-sm">
+                {tvs.length === 1
+                  ? `1 Receipt (${tvs[0].serialNumber}) will be created`
+                  : `${tvs.length} Individual Receipts (${tvs.map((t) => t.serialNumber).join(', ')}) will be created`}
+              </p>
+              <p className="mt-0.5">
+                Customer: <span className="font-bold text-slate-700">{customerName || '—'}</span>{' '}
+                ({mobileNumber || '—'}). All Receipts table me har TV ka alag row dikhega.
+              </p>
+            </div>
+          </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
             {onCancel && (
               <button
                 type="button"
@@ -687,12 +909,16 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
               {loading ? (
                 <>
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Saving Receipt...
+                  Saving Receipts...
                 </>
               ) : (
                 <>
                   <Save className="w-5 h-5" />
-                  {isEditMode ? 'UPDATE RECEIPT' : 'SAVE RECEIPT'}
+                  {isEditMode
+                    ? 'UPDATE RECEIPT'
+                    : tvs.length > 1
+                    ? `SAVE ALL ${tvs.length} RECEIPTS`
+                    : 'SAVE RECEIPT'}
                 </>
               )}
             </button>
