@@ -13,9 +13,11 @@ import {
   RefreshCw,
   PlusCircle,
   Search,
+  Scan,
 } from 'lucide-react';
 import { DashboardStats } from '../types/receipt';
 import { getClientDashboardStats } from '../lib/client-storage';
+import { BarcodeScannerModal } from './BarcodeScannerModal';
 
 interface DashboardCardsProps {
   onNavigate: (path: string) => void;
@@ -25,6 +27,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
 
   const fetchStats = async () => {
     setLoading(true);
@@ -66,6 +69,14 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setIsScannerOpen(true)}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-600/25 flex items-center gap-2 transition cursor-pointer"
+            title="Scan TV sticker barcode to update status directly from phone"
+          >
+            <Scan className="w-4 h-4 animate-pulse" /> Scan Barcode to Update Status
+          </button>
+
           <button
             onClick={() => onNavigate('/add-receipt')}
             className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/25 flex items-center gap-2 transition cursor-pointer"
@@ -165,70 +176,92 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
           Workshop Volume & Stage Breakdown
         </h2>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           {/* Total Receipts */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
+          <div className="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-xs">
             <div className="flex items-center justify-between text-slate-500">
-              <span className="text-[11px] font-bold uppercase">Total Receipts</span>
-              <FileSpreadsheet className="w-4 h-4 text-slate-400" />
+              <span className="text-[10px] font-bold uppercase">Total Receipts</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-slate-400" />
             </div>
-            <p className="text-2xl font-black text-slate-900 mt-2 font-mono">
+            <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
               {stats ? stats.totalReceipts : '-'}
             </p>
           </div>
 
           {/* Total TVs */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
+          <div className="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-xs">
             <div className="flex items-center justify-between text-slate-500">
-              <span className="text-[11px] font-bold uppercase">Total TVs</span>
-              <Tv className="w-4 h-4 text-slate-400" />
+              <span className="text-[10px] font-bold uppercase">Total TVs</span>
+              <Tv className="w-3.5 h-3.5 text-slate-400" />
             </div>
-            <p className="text-2xl font-black text-slate-900 mt-2 font-mono">
+            <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
               {stats ? stats.totalTVs : '-'}
             </p>
           </div>
 
           {/* Pending */}
-          <div className="bg-amber-50/60 rounded-2xl p-4 border border-amber-200/90 shadow-xs">
+          <div className="bg-amber-50/60 rounded-2xl p-3.5 border border-amber-200/90 shadow-xs">
             <div className="flex items-center justify-between text-amber-800">
-              <span className="text-[11px] font-bold uppercase">Pending</span>
-              <Clock className="w-4 h-4 text-amber-600" />
+              <span className="text-[10px] font-bold uppercase">Pending</span>
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
             </div>
-            <p className="text-2xl font-black text-amber-950 mt-2 font-mono">
+            <p className="text-xl font-black text-amber-950 mt-1.5 font-mono">
               {stats ? stats.pending : '-'}
             </p>
           </div>
 
           {/* Under Repair */}
-          <div className="bg-blue-50/60 rounded-2xl p-4 border border-blue-200/90 shadow-xs">
+          <div className="bg-blue-50/60 rounded-2xl p-3.5 border border-blue-200/90 shadow-xs">
             <div className="flex items-center justify-between text-blue-800">
-              <span className="text-[11px] font-bold uppercase">Under Repair</span>
-              <Wrench className="w-4 h-4 text-blue-600" />
+              <span className="text-[10px] font-bold uppercase">Under Repair</span>
+              <Wrench className="w-3.5 h-3.5 text-blue-600" />
             </div>
-            <p className="text-2xl font-black text-blue-950 mt-2 font-mono">
+            <p className="text-xl font-black text-blue-950 mt-1.5 font-mono">
               {stats ? stats.underRepair : '-'}
             </p>
           </div>
 
           {/* Ready */}
-          <div className="bg-emerald-50/60 rounded-2xl p-4 border border-emerald-200/90 shadow-xs">
+          <div className="bg-emerald-50/60 rounded-2xl p-3.5 border border-emerald-200/90 shadow-xs">
             <div className="flex items-center justify-between text-emerald-800">
-              <span className="text-[11px] font-bold uppercase">Ready</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span className="text-[10px] font-bold uppercase">Ready</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             </div>
-            <p className="text-2xl font-black text-emerald-950 mt-2 font-mono">
+            <p className="text-xl font-black text-emerald-950 mt-1.5 font-mono">
               {stats ? stats.ready : '-'}
             </p>
           </div>
 
           {/* Delivered */}
-          <div className="bg-slate-100 rounded-2xl p-4 border border-slate-300 shadow-xs">
+          <div className="bg-slate-100 rounded-2xl p-3.5 border border-slate-300 shadow-xs">
             <div className="flex items-center justify-between text-slate-700">
-              <span className="text-[11px] font-bold uppercase">Delivered</span>
-              <PackageCheck className="w-4 h-4 text-slate-600" />
+              <span className="text-[10px] font-bold uppercase">Delivered</span>
+              <PackageCheck className="w-3.5 h-3.5 text-slate-600" />
             </div>
-            <p className="text-2xl font-black text-slate-900 mt-2 font-mono">
+            <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
               {stats ? stats.delivered : '-'}
+            </p>
+          </div>
+
+          {/* Return */}
+          <div className="bg-purple-50/70 rounded-2xl p-3.5 border border-purple-200 shadow-xs">
+            <div className="flex items-center justify-between text-purple-800">
+              <span className="text-[10px] font-bold uppercase">Return</span>
+              <span className="w-2 h-2 rounded-full bg-purple-600" />
+            </div>
+            <p className="text-xl font-black text-purple-950 mt-1.5 font-mono">
+              {stats ? (stats.returned ?? 0) : '-'}
+            </p>
+          </div>
+
+          {/* Reject */}
+          <div className="bg-rose-50/70 rounded-2xl p-3.5 border border-rose-200 shadow-xs">
+            <div className="flex items-center justify-between text-rose-800">
+              <span className="text-[10px] font-bold uppercase">Reject</span>
+              <span className="w-2 h-2 rounded-full bg-rose-600" />
+            </div>
+            <p className="text-xl font-black text-rose-950 mt-1.5 font-mono">
+              {stats ? (stats.rejected ?? 0) : '-'}
             </p>
           </div>
         </div>
@@ -276,6 +309,17 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
           <ArrowRight className="w-5 h-5 text-slate-400 group-hover:text-slate-800 group-hover:translate-x-1 transition" />
         </div>
       </div>
+
+      {/* Barcode Scanner Modal for Dashboard / Technicians */}
+      <BarcodeScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScanSuccess={(scannedCode) => {
+          setIsScannerOpen(false);
+          // Navigate to update/edit receipt directly
+          onNavigate(`/update-receipt/${encodeURIComponent(scannedCode)}`);
+        }}
+      />
     </div>
   );
 };
