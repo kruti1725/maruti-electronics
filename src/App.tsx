@@ -12,6 +12,7 @@ import { StickerPrint } from './components/StickerPrint';
 import { Loading } from './components/Loading';
 import { IUser } from './types/user';
 import { IReceipt } from './types/receipt';
+import { searchClientReceipt } from './lib/client-storage';
 
 export default function App() {
   const [initialSerial, setInitialSerial] = useState<string>(() => {
@@ -47,8 +48,43 @@ export default function App() {
   const [activeA4Receipt, setActiveA4Receipt] = useState<IReceipt | null>(null);
   const [activeStickerReceipt, setActiveStickerReceipt] = useState<IReceipt | null>(null);
 
-  // Edit receipt state
+  // Edit receipt state & remote fetch for barcode/direct URL
   const [editingReceipt, setEditingReceipt] = useState<IReceipt | null>(null);
+  const [loadingEditReceipt, setLoadingEditReceipt] = useState(false);
+
+  // When visiting /update-receipt/:serialNumber directly or via scan, ensure complete data is loaded
+  useEffect(() => {
+    if (currentPath.startsWith('/update-receipt/')) {
+      const serialFromPath = currentPath.replace('/update-receipt/', '').trim();
+      if (!serialFromPath) return;
+
+      // If already matching current editingReceipt, no need to refetch
+      if (editingReceipt && editingReceipt.serialNumber.toUpperCase() === serialFromPath.toUpperCase()) {
+        return;
+      }
+
+      setLoadingEditReceipt(true);
+
+      // Check client storage first for immediate rendering
+      const localFound = searchClientReceipt(serialFromPath);
+      if (localFound && localFound.length > 0) {
+        setEditingReceipt(localFound[0]);
+      }
+
+      // Then fetch latest full receipt with all details from backend
+      fetch(`/api/receipts/${encodeURIComponent(serialFromPath)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.success && data.receipt) {
+            setEditingReceipt(data.receipt);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          setLoadingEditReceipt(false);
+        });
+    }
+  }, [currentPath]);
 
   // Synchronize browser history and path changes
   const navigate = (path: string) => {
@@ -172,6 +208,7 @@ export default function App() {
 
   // Render current view
   const renderContent = () => {
+    // If accessing admin route without authentication, show login
     if (isAdminRoute && !user) {
       return (
         <LoginPage
@@ -186,7 +223,10 @@ export default function App() {
 
     if (currentPath === '/login') {
       if (user) {
-        return <DashboardCards onNavigate={(path) => navigate(path)} />;
+        // already logged in, redirect to dashboard
+        return (
+          <DashboardCards onNavigate={(path) => navigate(path)} />
+        );
       }
       return (
         <LoginPage
@@ -239,9 +279,27 @@ export default function App() {
     }
 
     if (currentPath.startsWith('/update-receipt')) {
+      const serialFromPath = currentPath.replace('/update-receipt/', '').trim();
+      let receiptToEdit = editingReceipt;
+
+      if (!receiptToEdit && serialFromPath) {
+        const found = searchClientReceipt(serialFromPath);
+        if (found && found.length > 0) {
+          receiptToEdit = found[0];
+        }
+      }
+
+      if (loadingEditReceipt && !receiptToEdit) {
+        return (
+          <div className="min-h-[60vh] flex items-center justify-center">
+            <Loading message={`Loading Customer & TV details for ${serialFromPath}...`} size="lg" />
+          </div>
+        );
+      }
+
       return (
         <ReceiptForm
-          initialData={editingReceipt}
+          initialData={receiptToEdit}
           isEditMode={true}
           onSuccess={() => {
             navigate('/all-receipts');
@@ -251,11 +309,13 @@ export default function App() {
       );
     }
 
+    // Default route: Home Page
     return <HomePage onNavigate={(path) => navigate(path)} />;
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-red-600 selection:text-white">
+      {/* Navigation Bar */}
       <Navbar
         currentPath={currentPath}
         onNavigate={navigate}
@@ -263,10 +323,13 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      {/* Main Content */}
       <main className="flex-1">{renderContent()}</main>
 
+      {/* Footer */}
       <Footer onNavigate={navigate} />
 
+      {/* A4 Printable Receipt & PDF Modal */}
       {activeA4Receipt && (
         <PrintReceipt
           receipt={activeA4Receipt}
@@ -275,6 +338,7 @@ export default function App() {
         />
       )}
 
+      {/* 50mm x 25mm Thermal Sticker Print Modal */}
       {activeStickerReceipt && (
         <StickerPrint
           receipt={activeStickerReceipt}
