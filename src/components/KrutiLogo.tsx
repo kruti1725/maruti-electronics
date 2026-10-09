@@ -10,7 +10,7 @@ interface LogoProps {
  * Kruti Electronics Brand Official Logo Component
  * Upright & Perfectly Horizontal Centered Alignment:
  * - Left: Black geometric angle (<) for 'K'
- * - Right: Red geometric 'e' with horizontal crossbar and top/bottom curves
+ * - Right: Red geometric 'E' / 'e' with horizontal crossbar and top/bottom curves
  */
 export const KrutiLogo: React.FC<LogoProps> = ({
   className = 'w-8 h-8',
@@ -30,7 +30,10 @@ export const KrutiLogo: React.FC<LogoProps> = ({
       style={style}
       fill="none"
     >
-      {/* LEFT ELEMENT: Black '<' Angle Arm (K) - Upright & Straight */}
+      {/* 
+        LEFT ELEMENT: Black '<' Angle Arm (K)
+        Symmetric & perfectly upright: Top (46, 18) -> Left Corner (12, 50) -> Bottom (46, 82)
+      */}
       <path
         d="M 46 18 L 12 50 L 46 82"
         stroke={blackColor}
@@ -40,7 +43,10 @@ export const KrutiLogo: React.FC<LogoProps> = ({
         fill="none"
       />
 
-      {/* RIGHT ELEMENT: Red 'e' Straight Horizontal Center Bar at y=50 */}
+      {/* 
+        RIGHT ELEMENT: Red 'e' structure
+        Straight Horizontal Center Bar at y=50: from x=48 to x=88
+      */}
       <path
         d="M 48 50 L 88 50"
         stroke={redColor}
@@ -48,7 +54,10 @@ export const KrutiLogo: React.FC<LogoProps> = ({
         strokeLinecap="round"
       />
 
-      {/* Top circular arc of 'e' */}
+      {/* 
+        Top circular arc of 'e':
+        From top-left (52, 22) arching clockwise down to center bar right (88, 50)
+      */}
       <path
         d="M 52 22 A 32 32 0 0 1 88 50"
         stroke={redColor}
@@ -57,7 +66,10 @@ export const KrutiLogo: React.FC<LogoProps> = ({
         fill="none"
       />
 
-      {/* Bottom circular arc of 'e' */}
+      {/* 
+        Bottom circular arc of 'e':
+        From center right (88, 50) curving down and sweeping to bottom left (52, 78)
+      */}
       <path
         d="M 88 50 A 32 32 0 0 1 52 78"
         stroke={redColor}

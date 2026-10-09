@@ -1,6 +1,8 @@
 /**
  * Autocomplete and Smart Customer Directory
- * All suggestions are pulled directly from actual saved receipts in "All Receipts".
+ * NO mock/fake default names.
+ * All suggestions are pulled directly from actual saved receipts in "All Receipts" (database + storage).
+ * Provides instant search as soon as the user types even a single letter (e.g. 'r', 'k', 'a')!
  */
 
 import { IReceipt } from '../types/receipt';
@@ -63,9 +65,15 @@ const COMMON_FAULTS = [
   'Wifi Not Connecting / Remote Not Working',
 ];
 
+/**
+ * Extract real customer profiles from:
+ * 1. Saved receipts in local storage
+ * 2. Any previously saved customer records in this browser
+ */
 export function getSavedCustomerProfiles(): CustomerProfile[] {
   const map = new Map<string, CustomerProfile>();
 
+  // 1. Load from saved receipts (All Receipts)
   try {
     const receipts = getClientReceipts();
     if (Array.isArray(receipts)) {
@@ -73,7 +81,7 @@ export function getSavedCustomerProfiles(): CustomerProfile[] {
         const name = r.customerName?.trim();
         const mob = r.mobileNumber?.replace(/\D/g, '').slice(-10);
         if (name && mob && mob.length === 10) {
-          const key = mob;
+          const key = mob; // unique key by 10-digit mobile number
           const existing = map.get(key);
           const brands = r.tvs?.map((tv) => tv.brand).filter(Boolean) || [];
 
@@ -98,6 +106,7 @@ export function getSavedCustomerProfiles(): CustomerProfile[] {
     }
   } catch {}
 
+  // 2. Load from customer profiles cache
   try {
     const raw = localStorage.getItem(CUSTOMERS_MAP_KEY);
     if (raw) {
@@ -118,6 +127,10 @@ export function getSavedCustomerProfiles(): CustomerProfile[] {
   return Array.from(map.values());
 }
 
+/**
+ * Search customer profiles instantly by typing any letter of Name or Mobile
+ * (e.g. typing 'r' returns all customers starting with or containing 'r')
+ */
 export function searchCustomerProfiles(query: string): CustomerProfile[] {
   const clean = query.trim().toLowerCase();
   if (!clean) return [];
@@ -130,11 +143,13 @@ export function searchCustomerProfiles(query: string): CustomerProfile[] {
       const name = p.customerName.toLowerCase();
       const phone = p.mobileNumber;
 
+      // Starts with matches get highest priority
       const nameMatch = name.includes(clean);
       const phoneMatch = digitOnly.length > 0 && phone.includes(digitOnly);
       return nameMatch || phoneMatch;
     })
     .sort((a, b) => {
+      // Prioritize names that START with the query letter
       const aStarts = a.customerName.toLowerCase().startsWith(clean);
       const bStarts = b.customerName.toLowerCase().startsWith(clean);
       if (aStarts && !bStarts) return -1;
@@ -143,6 +158,9 @@ export function searchCustomerProfiles(query: string): CustomerProfile[] {
     });
 }
 
+/**
+ * Find exact customer by Name
+ */
 export function findCustomerByName(name: string): CustomerProfile | undefined {
   if (!name || name.trim().length < 2) return undefined;
   const profiles = getSavedCustomerProfiles();
@@ -150,6 +168,9 @@ export function findCustomerByName(name: string): CustomerProfile | undefined {
   return profiles.find((p) => p.customerName.trim().toLowerCase() === search);
 }
 
+/**
+ * Find exact customer by Mobile
+ */
 export function findCustomerByMobile(mobile: string): CustomerProfile | undefined {
   if (!mobile) return undefined;
   const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
@@ -158,6 +179,9 @@ export function findCustomerByMobile(mobile: string): CustomerProfile | undefine
   return profiles.find((p) => p.mobileNumber.replace(/\D/g, '').endsWith(cleanMobile));
 }
 
+/**
+ * Save customer entry upon receipt creation so next visit is instantly remembered
+ */
 export function saveAutocompleteEntry(entry: {
   customerName?: string;
   mobileNumber?: string;
@@ -203,9 +227,14 @@ export function saveAutocompleteEntry(entry: {
 
       localStorage.setItem(CUSTOMERS_MAP_KEY, JSON.stringify(profiles.slice(0, 500)));
     }
-  } catch (e) {}
+  } catch (e) {
+    // ignore storage errors
+  }
 }
 
+/**
+ * Get cached names, brands and faults for HTML datalists
+ */
 export function getAutocompleteCache(): AutocompleteCache {
   const profiles = getSavedCustomerProfiles();
   return {
