@@ -1,14 +1,14 @@
 /**
  * Autocomplete and Smart Customer Directory
- * NO mock/fake default names.
- * All suggestions are pulled directly from actual saved receipts in "All Receipts" (database + storage).
- * Provides instant search as soon as the user types even a single letter (e.g. 'r', 'k', 'a')!
+ * Automatically pulls real customer profiles from:
+ * 1. Live Server API: /api/receipts (all saved database records like Nilesh Yadav, Rishab Yadav, Kishlay Yadav)
+ * 2. Local Storage client receipts
  */
 
 import { IReceipt } from '../types/receipt';
 import { getClientReceipts } from './client-storage';
 
-const CUSTOMERS_MAP_KEY = 'kruti_real_customers_v1';
+const CUSTOMERS_MAP_KEY = 'kruti_real_customers_v2';
 
 export interface CustomerProfile {
   customerName: string;
@@ -28,9 +28,9 @@ export interface AutocompleteCache {
 }
 
 const COMMON_BRANDS = [
+  'Sony',
   'Samsung',
   'LG',
-  'Sony',
   'Mi (Xiaomi)',
   'OnePlus',
   'TCL',
@@ -51,7 +51,7 @@ const COMMON_BRANDS = [
 ];
 
 const COMMON_FAULTS = [
-  'No Display (Sound OK / Backlight issue)',
+  'No Display / Black Screen',
   'Dead (No Power / Red light blinking)',
   'Sound OK, Screen Blank',
   'Horizontal / Vertical Lines on screen',
@@ -65,15 +65,91 @@ const COMMON_FAULTS = [
   'Wifi Not Connecting / Remote Not Working',
 ];
 
+let inMemoryProfiles: CustomerProfile[] = [];
+
 /**
- * Extract real customer profiles from:
- * 1. Saved receipts in local storage
- * 2. Any previously saved customer records in this browser
+ * Sync profiles from server receipts into cache
  */
-export function getSavedCustomerProfiles(): CustomerProfile[] {
+export async function syncCustomerProfilesFromServer(): Promise<CustomerProfile[]> {
+  try {
+    const res = await fetch('/api/receipts?limit=500');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.receipts)) {
+        addReceiptsToCustomerProfiles(data.receipts);
+      }
+    }
+  } catch {}
+  return getSavedCustomerProfiles();
+}
+
+/**
+ * Add a list of receipts to customer directory
+ */
+export function addReceiptsToCustomerProfiles(receipts: IReceipt[]) {
+  if (!Array.isArray(receipts)) return;
+  const current = getSavedCustomerProfiles();
   const map = new Map<string, CustomerProfile>();
 
-  // 1. Load from saved receipts (All Receipts)
+  current.forEach((p) => {
+    const key = p.mobileNumber.slice(-10);
+    map.set(key, p);
+  });
+
+  receipts.forEach((r) => {
+    const name = r.customerName?.trim();
+    const mob = r.mobileNumber?.replace(/\D/g, '').slice(-10);
+    if (name && mob && mob.length >= 10) {
+      const existing = map.get(mob);
+      const brands = r.tvs?.map((tv) => tv.brand).filter(Boolean) || [];
+
+      if (existing) {
+        existing.customerName = name;
+        existing.previousBrands = Array.from(new Set([...(existing.previousBrands || []), ...brands]));
+        if (!existing.lastReceipt || r.serialNumber > existing.lastReceipt) {
+          existing.lastReceipt = r.serialNumber;
+          existing.lastVisit = r.receivedDate || existing.lastVisit;
+        }
+      } else {
+        map.set(mob, {
+          customerName: name,
+          mobileNumber: mob,
+          lastVisit: r.receivedDate || (r as any).createdAt,
+          lastReceipt: r.serialNumber,
+          previousBrands: brands,
+          lastEstimatedCost: r.tvs?.[0]?.estimatedCost,
+        });
+      }
+    }
+  });
+
+  const merged = Array.from(map.values());
+  inMemoryProfiles = merged;
+  try {
+    localStorage.setItem(CUSTOMERS_MAP_KEY, JSON.stringify(merged.slice(0, 500)));
+  } catch {}
+}
+
+export function getSavedCustomerProfiles(): CustomerProfile[] {
+  if (inMemoryProfiles.length > 0) return inMemoryProfiles;
+
+  const map = new Map<string, CustomerProfile>();
+
+  try {
+    const raw = localStorage.getItem(CUSTOMERS_MAP_KEY);
+    if (raw) {
+      const list: CustomerProfile[] = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        list.forEach((p) => {
+          const mob = p.mobileNumber?.replace(/\D/g, '').slice(-10);
+          if (mob && p.customerName) {
+            map.set(mob, p);
+          }
+        });
+      }
+    }
+  } catch {}
+
   try {
     const receipts = getClientReceipts();
     if (Array.isArray(receipts)) {
@@ -81,21 +157,21 @@ export function getSavedCustomerProfiles(): CustomerProfile[] {
         const name = r.customerName?.trim();
         const mob = r.mobileNumber?.replace(/\D/g, '').slice(-10);
         if (name && mob && mob.length === 10) {
-          const key = mob; // unique key by 10-digit mobile number
-          const existing = map.get(key);
+          const existing = map.get(mob);
           const brands = r.tvs?.map((tv) => tv.brand).filter(Boolean) || [];
 
           if (existing) {
+            existing.customerName = name;
             existing.previousBrands = Array.from(new Set([...(existing.previousBrands || []), ...brands]));
             if (!existing.lastReceipt || r.serialNumber > existing.lastReceipt) {
               existing.lastReceipt = r.serialNumber;
               existing.lastVisit = r.receivedDate;
             }
           } else {
-            map.set(key, {
+            map.set(mob, {
               customerName: name,
               mobileNumber: mob,
-              lastVisit: r.receivedDate || r.createdAt,
+              lastVisit: r.receivedDate || (r as any).createdAt,
               lastReceipt: r.serialNumber,
               previousBrands: brands,
               lastEstimatedCost: r.tvs?.[0]?.estimatedCost,
@@ -106,31 +182,11 @@ export function getSavedCustomerProfiles(): CustomerProfile[] {
     }
   } catch {}
 
-  // 2. Load from customer profiles cache
-  try {
-    const raw = localStorage.getItem(CUSTOMERS_MAP_KEY);
-    if (raw) {
-      const list: CustomerProfile[] = JSON.parse(raw);
-      if (Array.isArray(list)) {
-        list.forEach((p) => {
-          const mob = p.mobileNumber?.replace(/\D/g, '').slice(-10);
-          if (mob && p.customerName) {
-            if (!map.has(mob)) {
-              map.set(mob, p);
-            }
-          }
-        });
-      }
-    }
-  } catch {}
-
-  return Array.from(map.values());
+  const result = Array.from(map.values());
+  inMemoryProfiles = result;
+  return result;
 }
 
-/**
- * Search customer profiles instantly by typing any letter of Name or Mobile
- * (e.g. typing 'r' returns all customers starting with or containing 'r')
- */
 export function searchCustomerProfiles(query: string): CustomerProfile[] {
   const clean = query.trim().toLowerCase();
   if (!clean) return [];
@@ -143,13 +199,11 @@ export function searchCustomerProfiles(query: string): CustomerProfile[] {
       const name = p.customerName.toLowerCase();
       const phone = p.mobileNumber;
 
-      // Starts with matches get highest priority
       const nameMatch = name.includes(clean);
       const phoneMatch = digitOnly.length > 0 && phone.includes(digitOnly);
       return nameMatch || phoneMatch;
     })
     .sort((a, b) => {
-      // Prioritize names that START with the query letter
       const aStarts = a.customerName.toLowerCase().startsWith(clean);
       const bStarts = b.customerName.toLowerCase().startsWith(clean);
       if (aStarts && !bStarts) return -1;
@@ -158,9 +212,6 @@ export function searchCustomerProfiles(query: string): CustomerProfile[] {
     });
 }
 
-/**
- * Find exact customer by Name
- */
 export function findCustomerByName(name: string): CustomerProfile | undefined {
   if (!name || name.trim().length < 2) return undefined;
   const profiles = getSavedCustomerProfiles();
@@ -168,9 +219,6 @@ export function findCustomerByName(name: string): CustomerProfile | undefined {
   return profiles.find((p) => p.customerName.trim().toLowerCase() === search);
 }
 
-/**
- * Find exact customer by Mobile
- */
 export function findCustomerByMobile(mobile: string): CustomerProfile | undefined {
   if (!mobile) return undefined;
   const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
@@ -179,9 +227,6 @@ export function findCustomerByMobile(mobile: string): CustomerProfile | undefine
   return profiles.find((p) => p.mobileNumber.replace(/\D/g, '').endsWith(cleanMobile));
 }
 
-/**
- * Save customer entry upon receipt creation so next visit is instantly remembered
- */
 export function saveAutocompleteEntry(entry: {
   customerName?: string;
   mobileNumber?: string;
@@ -225,16 +270,12 @@ export function saveAutocompleteEntry(entry: {
         profiles.unshift(updatedProfile);
       }
 
+      inMemoryProfiles = profiles;
       localStorage.setItem(CUSTOMERS_MAP_KEY, JSON.stringify(profiles.slice(0, 500)));
     }
-  } catch (e) {
-    // ignore storage errors
-  }
+  } catch (e) {}
 }
 
-/**
- * Get cached names, brands and faults for HTML datalists
- */
 export function getAutocompleteCache(): AutocompleteCache {
   const profiles = getSavedCustomerProfiles();
   return {

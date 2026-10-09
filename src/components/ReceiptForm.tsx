@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -11,10 +11,18 @@ import {
   RefreshCw,
   Hash,
   Sparkles,
+  User,
+  Phone,
 } from 'lucide-react';
 import { IReceipt, TVStatus, TVPriority, PaymentMethod } from '../types/receipt';
 import { receiptSchema } from '../lib/validation';
 import { saveClientReceipt, updateClientReceipt } from '../lib/client-storage';
+import {
+  searchCustomerProfiles,
+  syncCustomerProfilesFromServer,
+  saveAutocompleteEntry,
+  CustomerProfile,
+} from '../lib/autocomplete-cache';
 
 interface ReceiptFormProps {
   initialData?: IReceipt | null;
@@ -25,7 +33,7 @@ interface ReceiptFormProps {
 
 export interface TVReceiptEntry {
   id: string;
-  serialNumber: string; // Har TV ka apna alag receipt number
+  serialNumber: string;
   brand: string;
   modelNumber: string;
   size: string;
@@ -36,10 +44,10 @@ export interface TVReceiptEntry {
   priority: TVPriority;
   rackNo: string;
   paymentMethod: PaymentMethod;
-  repairBy: string; // Technician
-  revisedDate: string; // Revise Date
-  outDate: string; // Out Date
-  remarks: string; // Accessories / Notes
+  repairBy: string;
+  revisedDate: string;
+  outDate: string;
+  remarks: string;
 }
 
 const COMMON_BRANDS = [
@@ -122,6 +130,16 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   const [mobileNumber, setMobileNumber] = useState(initialData?.mobileNumber || '');
   const [receivedDate, setReceivedDate] = useState(initialData?.receivedDate || getTodayDate());
 
+  // Dropdown states for smart customer auto-fill
+  const [customerDropdownList, setCustomerDropdownList] = useState<CustomerProfile[]>([]);
+  const [showNameDropdown, setShowNameDropdown] = useState(false);
+  const [showMobileDropdown, setShowMobileDropdown] = useState(false);
+
+  // Sync server receipts on page load so all past customers are available instantly
+  useEffect(() => {
+    syncCustomerProfilesFromServer();
+  }, []);
+
   // Individual TV Units with separate receipt numbers
   const [tvs, setTvs] = useState<TVReceiptEntry[]>(() => {
     if (initialData) {
@@ -163,6 +181,48 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
   const [serverError, setServerError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Click on customer dropdown to auto-fill both name and phone!
+  const selectCustomer = (profile: CustomerProfile) => {
+    setCustomerName(profile.customerName);
+    setMobileNumber(profile.mobileNumber);
+    setShowNameDropdown(false);
+    setShowMobileDropdown(false);
+
+    if (profile.previousBrands && profile.previousBrands.length > 0 && tvs.length > 0) {
+      if (!tvs[0].modelNumber) {
+        handleTVChange(0, 'brand', profile.previousBrands[0]);
+      }
+    }
+  };
+
+  const handleCustomerNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomerName(val);
+
+    if (val.trim().length > 0) {
+      const results = searchCustomerProfiles(val);
+      setCustomerDropdownList(results);
+      setShowNameDropdown(results.length > 0);
+      setShowMobileDropdown(false);
+    } else {
+      setShowNameDropdown(false);
+    }
+  };
+
+  const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+    setMobileNumber(cleaned);
+
+    if (cleaned.length > 0) {
+      const results = searchCustomerProfiles(cleaned);
+      setCustomerDropdownList(results);
+      setShowMobileDropdown(results.length > 0);
+      setShowNameDropdown(false);
+    } else {
+      setShowMobileDropdown(false);
+    }
+  };
+
   // Add another TV / Receipt
   const handleAddTV = () => {
     const lastSerial = tvs[tvs.length - 1]?.serialNumber;
@@ -199,11 +259,6 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     handleTVChange(index, 'serialNumber', newSerial);
   };
 
-  const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
-    setMobileNumber(cleaned);
-  };
-
   const resetForm = () => {
     setCustomerName('');
     setMobileNumber('');
@@ -212,6 +267,8 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     setErrors({});
     setServerError(null);
     setSuccessMessage(null);
+    setShowNameDropdown(false);
+    setShowMobileDropdown(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -310,6 +367,12 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
           setSuccessMessage(`Receipt ${data.receipt.serialNumber} Updated Successfully!`);
           try {
             updateClientReceipt(targetSerial, data.receipt);
+            saveAutocompleteEntry({
+              customerName: singleReceipt.customerName,
+              mobileNumber: singleReceipt.mobileNumber,
+              brand: singleReceipt.tvs[0].brand,
+              receiptNumber: targetSerial,
+            });
           } catch {}
           onSuccess(data.receipt);
           return;
@@ -317,7 +380,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
           throw new Error(data.error || 'Server error updating receipt.');
         }
       } else {
-        // Create each receipt (Har TV ka alag receipt document save hoga)
+        // Create each receipt
         const createdList: IReceipt[] = [];
 
         for (let i = 0; i < receiptsToSave.length; i++) {
@@ -340,6 +403,12 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
 
           try {
             saveClientReceipt(created);
+            saveAutocompleteEntry({
+              customerName: created.customerName,
+              mobileNumber: created.mobileNumber,
+              brand: created.tvs[0]?.brand,
+              receiptNumber: created.serialNumber,
+            });
           } catch {}
         }
 
@@ -438,27 +507,78 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {/* Customer Name */}
-            <div>
+            {/* Customer Name Input with Live Dropdown */}
+            <div className="relative">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                 Customer Name <span className="text-red-600">*</span>
               </label>
               <input
                 type="text"
+                autoComplete="off"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="e.g. Rahul Patel"
+                onChange={handleCustomerNameChange}
+                onFocus={() => {
+                  if (customerName.trim().length > 0) {
+                    const results = searchCustomerProfiles(customerName);
+                    setCustomerDropdownList(results);
+                    setShowNameDropdown(results.length > 0);
+                  }
+                }}
+                placeholder="Type letter e.g. Ni, Ri, Ki..."
                 className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-medium focus:bg-white focus:outline-none transition ${
                   errors.customerName ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
                 }`}
               />
+
+              {/* Floating Instant Customer Suggestion Dropdown */}
+              {showNameDropdown && customerDropdownList.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto">
+                  <div className="px-3.5 py-1.5 bg-slate-100 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                    <span>Found {customerDropdownList.length} Customer{customerDropdownList.length > 1 ? 's' : ''} in All Receipts</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowNameDropdown(false)}
+                      className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {customerDropdownList.map((c, i) => (
+                    <div
+                      key={i}
+                      onClick={() => selectCustomer(c)}
+                      className="px-4 py-3 hover:bg-red-50 transition cursor-pointer flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-slate-100 text-slate-700 group-hover:bg-red-600 group-hover:text-white transition">
+                          <User className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900 group-hover:text-red-700">
+                            {c.customerName}
+                          </p>
+                          <p className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
+                            <Phone className="w-3 h-3 text-slate-400" /> +91 {c.mobileNumber}
+                          </p>
+                        </div>
+                      </div>
+                      {c.previousBrands && c.previousBrands.length > 0 && (
+                        <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
+                          {c.previousBrands[0]}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {errors.customerName && (
                 <p className="text-xs text-red-600 mt-1 font-medium">{errors.customerName}</p>
               )}
             </div>
 
-            {/* Mobile Number */}
-            <div>
+            {/* Mobile Number Input with Live Dropdown */}
+            <div className="relative">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                 Mobile Number (10 Digits) <span className="text-red-600">*</span>
               </label>
@@ -468,15 +588,66 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                 </span>
                 <input
                   type="tel"
+                  autoComplete="off"
                   maxLength={10}
                   value={mobileNumber}
                   onChange={handleMobileChange}
+                  onFocus={() => {
+                    if (mobileNumber.length > 0) {
+                      const results = searchCustomerProfiles(mobileNumber);
+                      setCustomerDropdownList(results);
+                      setShowMobileDropdown(results.length > 0);
+                    }
+                  }}
                   placeholder="9876543210"
                   className={`w-full pl-14 pr-4 py-3 bg-slate-50 border-2 rounded-xl text-slate-900 font-mono font-medium focus:bg-white focus:outline-none transition ${
                     errors.mobileNumber ? 'border-red-500' : 'border-slate-200 focus:border-red-600'
                   }`}
                 />
               </div>
+
+              {/* Floating Instant Mobile Match Dropdown */}
+              {showMobileDropdown && customerDropdownList.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto">
+                  <div className="px-3.5 py-1.5 bg-slate-100 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                    <span>Matching Phone Contacts</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowMobileDropdown(false)}
+                      className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {customerDropdownList.map((c, i) => (
+                    <div
+                      key={i}
+                      onClick={() => selectCustomer(c)}
+                      className="px-4 py-3 hover:bg-red-50 transition cursor-pointer flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-slate-100 text-slate-700 group-hover:bg-red-600 group-hover:text-white transition">
+                          <Phone className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-mono font-bold text-slate-900 group-hover:text-red-700">
+                            +91 {c.mobileNumber}
+                          </p>
+                          <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                            {c.customerName}
+                          </p>
+                        </div>
+                      </div>
+                      {c.previousBrands && c.previousBrands.length > 0 && (
+                        <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
+                          {c.previousBrands[0]}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {errors.mobileNumber && (
                 <p className="text-xs text-red-600 mt-1 font-medium">{errors.mobileNumber}</p>
               )}
@@ -595,7 +766,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
 
                 {/* TV Fields Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Brand (Typing enabled) */}
+                  {/* Brand */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Brand <span className="text-red-600">*</span>
@@ -634,7 +805,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     />
                   </div>
 
-                  {/* Size (Typing enabled) */}
+                  {/* Size */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       TV Size
@@ -685,7 +856,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                     </select>
                   </div>
 
-                  {/* Complaint / Problem Description */}
+                  {/* Complaint */}
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
                       Complaint / Problem Description <span className="text-red-600">*</span>
