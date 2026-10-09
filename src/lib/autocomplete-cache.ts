@@ -1,16 +1,20 @@
 /**
- * Utility to cache autocomplete suggestions & customer profiles in localStorage
- * for Customer Name, Mobile Number, Brand/Product, Fault/Complaint, and Model
+ * Autocomplete and Smart Customer Directory
+ * All suggestions are pulled directly from actual saved receipts in "All Receipts".
  */
 
-const STORAGE_KEY = 'kruti_autocomplete_cache_v2';
-const CUSTOMERS_MAP_KEY = 'kruti_customer_profiles_v1';
+import { IReceipt } from '../types/receipt';
+import { getClientReceipts } from './client-storage';
+
+const CUSTOMERS_MAP_KEY = 'kruti_real_customers_v1';
 
 export interface CustomerProfile {
   customerName: string;
   mobileNumber: string;
   lastVisit?: string;
   previousBrands?: string[];
+  lastReceipt?: string;
+  lastEstimatedCost?: number;
 }
 
 export interface AutocompleteCache {
@@ -21,65 +25,124 @@ export interface AutocompleteCache {
   faults: string[];
 }
 
-const DEFAULT_CACHE: AutocompleteCache = {
-  customerNames: ['Raju', 'Rajvir', 'Ramesh', 'Rahul', 'Mahesh', 'Suresh', 'Amit'],
-  mobileNumbers: ['7778833577'],
-  brands: ['Samsung', 'LG', 'Sony', 'Mi / Xiaomi', 'OnePlus', 'TCL', 'Vu', 'Panasonic', 'Realme', 'Haier'],
-  models: [],
-  faults: [
-    'No Display (Sound OK / Backlight issue)',
-    'Dead (No Power / Red light blinking)',
-    'Sound OK, Screen Blank',
-    'Horizontal / Vertical Lines on screen',
-    'Display Double Image / Flickering',
-    'HDMI Ports Not Working',
-    'Restarting Repeatedly / Smart OS Hang',
-    'Sound Not Working / Distorted',
-    'Panel Water Damage / COF Issue',
-    'Motherboard Repair',
-    'Power Supply Board Problem',
-  ],
-};
+const COMMON_BRANDS = [
+  'Samsung',
+  'LG',
+  'Sony',
+  'Mi (Xiaomi)',
+  'OnePlus',
+  'TCL',
+  'Vu',
+  'Panasonic',
+  'Realme',
+  'Haier',
+  'Micromax',
+  'Lloyd',
+  'TOSHIBA',
+  'Sansui',
+  'BPL',
+  'Onida',
+  'Thomson',
+  'Kodak',
+  'Intex',
+  'Videocon',
+];
 
-export function getAutocompleteCache(): AutocompleteCache {
-  if (typeof window === 'undefined') return DEFAULT_CACHE;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_CACHE));
-      return DEFAULT_CACHE;
-    }
-    const parsed = JSON.parse(raw);
-    return {
-      customerNames: Array.isArray(parsed.customerNames) ? parsed.customerNames : DEFAULT_CACHE.customerNames,
-      mobileNumbers: Array.isArray(parsed.mobileNumbers) ? parsed.mobileNumbers : DEFAULT_CACHE.mobileNumbers,
-      brands: Array.isArray(parsed.brands) ? parsed.brands : DEFAULT_CACHE.brands,
-      models: Array.isArray(parsed.models) ? parsed.models : DEFAULT_CACHE.models,
-      faults: Array.isArray(parsed.faults) ? parsed.faults : DEFAULT_CACHE.faults,
-    };
-  } catch (err) {
-    return DEFAULT_CACHE;
-  }
-}
+const COMMON_FAULTS = [
+  'No Display (Sound OK / Backlight issue)',
+  'Dead (No Power / Red light blinking)',
+  'Sound OK, Screen Blank',
+  'Horizontal / Vertical Lines on screen',
+  'Display Double Image / Flickering',
+  'HDMI Ports Not Working',
+  'Restarting Repeatedly / Smart OS Hang',
+  'Sound Not Working / Distorted',
+  'Panel Water Damage / COF Issue',
+  'Motherboard Repair',
+  'Power Supply Board Problem',
+  'Wifi Not Connecting / Remote Not Working',
+];
 
-/**
- * Get saved customer profiles (name <-> mobile bidirectional auto-link)
- */
 export function getSavedCustomerProfiles(): CustomerProfile[] {
-  if (typeof window === 'undefined') return [];
+  const map = new Map<string, CustomerProfile>();
+
+  try {
+    const receipts = getClientReceipts();
+    if (Array.isArray(receipts)) {
+      receipts.forEach((r) => {
+        const name = r.customerName?.trim();
+        const mob = r.mobileNumber?.replace(/\D/g, '').slice(-10);
+        if (name && mob && mob.length === 10) {
+          const key = mob;
+          const existing = map.get(key);
+          const brands = r.tvs?.map((tv) => tv.brand).filter(Boolean) || [];
+
+          if (existing) {
+            existing.previousBrands = Array.from(new Set([...(existing.previousBrands || []), ...brands]));
+            if (!existing.lastReceipt || r.serialNumber > existing.lastReceipt) {
+              existing.lastReceipt = r.serialNumber;
+              existing.lastVisit = r.receivedDate;
+            }
+          } else {
+            map.set(key, {
+              customerName: name,
+              mobileNumber: mob,
+              lastVisit: r.receivedDate || r.createdAt,
+              lastReceipt: r.serialNumber,
+              previousBrands: brands,
+              lastEstimatedCost: r.tvs?.[0]?.estimatedCost,
+            });
+          }
+        }
+      });
+    }
+  } catch {}
+
   try {
     const raw = localStorage.getItem(CUSTOMERS_MAP_KEY);
-    if (!raw) return [];
-    const list = JSON.parse(raw);
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
+    if (raw) {
+      const list: CustomerProfile[] = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        list.forEach((p) => {
+          const mob = p.mobileNumber?.replace(/\D/g, '').slice(-10);
+          if (mob && p.customerName) {
+            if (!map.has(mob)) {
+              map.set(mob, p);
+            }
+          }
+        });
+      }
+    }
+  } catch {}
+
+  return Array.from(map.values());
 }
 
-/**
- * Lookup mobile number by customer name
- */
+export function searchCustomerProfiles(query: string): CustomerProfile[] {
+  const clean = query.trim().toLowerCase();
+  if (!clean) return [];
+
+  const profiles = getSavedCustomerProfiles();
+  const digitOnly = clean.replace(/\D/g, '');
+
+  return profiles
+    .filter((p) => {
+      const name = p.customerName.toLowerCase();
+      const phone = p.mobileNumber;
+
+      const nameMatch = name.includes(clean);
+      const phoneMatch = digitOnly.length > 0 && phone.includes(digitOnly);
+      return nameMatch || phoneMatch;
+    })
+    .sort((a, b) => {
+      const aStarts = a.customerName.toLowerCase().startsWith(clean);
+      const bStarts = b.customerName.toLowerCase().startsWith(clean);
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+      return a.customerName.localeCompare(b.customerName);
+    });
+}
+
 export function findCustomerByName(name: string): CustomerProfile | undefined {
   if (!name || name.trim().length < 2) return undefined;
   const profiles = getSavedCustomerProfiles();
@@ -87,9 +150,6 @@ export function findCustomerByName(name: string): CustomerProfile | undefined {
   return profiles.find((p) => p.customerName.trim().toLowerCase() === search);
 }
 
-/**
- * Lookup customer name by mobile number
- */
 export function findCustomerByMobile(mobile: string): CustomerProfile | undefined {
   if (!mobile) return undefined;
   const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
@@ -104,65 +164,55 @@ export function saveAutocompleteEntry(entry: {
   brand?: string;
   model?: string;
   fault?: string;
+  receiptNumber?: string;
 }) {
   if (typeof window === 'undefined') return;
   try {
-    const current = getAutocompleteCache();
-
-    const addUnique = (list: string[], val?: string) => {
-      const clean = val?.trim();
-      if (!clean || clean.length < 2) return list;
-      const exists = list.some((item) => item.toLowerCase() === clean.toLowerCase());
-      if (!exists) {
-        return [clean, ...list].slice(0, 80);
-      }
-      return list;
-    };
-
-    const updated: AutocompleteCache = {
-      customerNames: addUnique(current.customerNames, entry.customerName),
-      mobileNumbers: addUnique(current.mobileNumbers, entry.mobileNumber),
-      brands: addUnique(current.brands, entry.brand),
-      models: addUnique(current.models, entry.model),
-      faults: addUnique(current.faults, entry.fault),
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-
-    // Also persist customer profile relationship
     const cName = entry.customerName?.trim();
-    const cMob = entry.mobileNumber?.replace(/\D/g, '').trim();
+    const cMob = entry.mobileNumber?.replace(/\D/g, '').slice(-10);
 
-    if (cName && cMob && cMob.length === 10) {
+    if (cName && cName.length >= 2 && cMob && cMob.length === 10) {
       const profiles = getSavedCustomerProfiles();
-      const existingIdx = profiles.findIndex(
-        (p) =>
-          p.mobileNumber === cMob ||
-          p.customerName.toLowerCase() === cName.toLowerCase()
-      );
+      const existingIdx = profiles.findIndex((p) => p.mobileNumber === cMob);
 
       const updatedProfile: CustomerProfile = {
         customerName: cName,
         mobileNumber: cMob,
-        lastVisit: new Date().toISOString(),
+        lastVisit: new Date().toISOString().split('T')[0],
         previousBrands: entry.brand ? [entry.brand] : [],
+        lastReceipt: entry.receiptNumber,
       };
 
       if (existingIdx >= 0) {
+        const prevBrands = profiles[existingIdx].previousBrands || [];
+        const mergedBrands = entry.brand
+          ? Array.from(new Set([entry.brand, ...prevBrands]))
+          : prevBrands;
+
         profiles[existingIdx] = {
           ...profiles[existingIdx],
-          ...updatedProfile,
-          previousBrands: Array.from(
-            new Set([...(profiles[existingIdx].previousBrands || []), ...(entry.brand ? [entry.brand] : [])])
-          ),
+          customerName: cName,
+          mobileNumber: cMob,
+          lastVisit: updatedProfile.lastVisit,
+          previousBrands: mergedBrands,
+          lastReceipt: entry.receiptNumber || profiles[existingIdx].lastReceipt,
         };
       } else {
         profiles.unshift(updatedProfile);
       }
 
-      localStorage.setItem(CUSTOMERS_MAP_KEY, JSON.stringify(profiles.slice(0, 150)));
+      localStorage.setItem(CUSTOMERS_MAP_KEY, JSON.stringify(profiles.slice(0, 500)));
     }
-  } catch (e) {
-    // ignore localstorage errors
-  }
+  } catch (e) {}
+}
+
+export function getAutocompleteCache(): AutocompleteCache {
+  const profiles = getSavedCustomerProfiles();
+  return {
+    customerNames: profiles.map((p) => p.customerName),
+    mobileNumbers: profiles.map((p) => p.mobileNumber),
+    brands: COMMON_BRANDS,
+    models: [],
+    faults: COMMON_FAULTS,
+  };
 }
