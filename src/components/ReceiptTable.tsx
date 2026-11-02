@@ -31,6 +31,24 @@ interface ReceiptTableProps {
   onAddNew: () => void;
 }
 
+function calculateDays(receivedDate: string): number {
+  if (!receivedDate) return 0;
+  const dateOnly = receivedDate.split('T')[0];
+  const parts = dateOnly.split('-');
+  if (parts.length !== 3) return 0;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+
+  const receivedMidnight = new Date(year, month, day).getTime();
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const diffMs = todayMidnight - receivedMidnight;
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
 export const ReceiptTable: React.FC<ReceiptTableProps> = ({
   onUpdate,
   onPrintA4,
@@ -62,16 +80,20 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
     setLoading(true);
     setError(null);
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('kruti_auth_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const params = new URLSearchParams({
         page: page.toString(),
-        limit: '20',
+        limit: '25',
       });
       if (searchTerm) params.append('search', searchTerm);
       if (statusFilter !== 'All') params.append('status', statusFilter);
       if (priorityFilter !== 'All') params.append('priority', priorityFilter);
       if (daysFilter !== 'All') params.append('days', daysFilter);
 
-      const res = await fetch(`/api/receipts?${params.toString()}`);
+      const res = await fetch(`/api/receipts?${params.toString()}`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.receipts)) {
@@ -81,45 +103,42 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
           return;
         }
       }
-      throw new Error('API fetch error');
+      throw new Error('API unavailable, using local store');
     } catch {
-      // Local fallback
-      const local = getClientReceipts();
-      let filtered = [...local];
-
+      // Seamless local fallback
+      let list = getClientReceipts();
       if (searchTerm) {
-        const lower = searchTerm.toLowerCase();
-        filtered = filtered.filter(
-          (r) =>
-            r.serialNumber.toLowerCase().includes(lower) ||
-            r.customerName.toLowerCase().includes(lower) ||
-            r.mobileNumber.includes(lower) ||
-            r.tvs.some((tv) => tv.brand.toLowerCase().includes(lower))
-        );
-      }
-
-      if (statusFilter !== 'All') {
-        filtered = filtered.filter((r) => r.tvs.some((tv) => tv.status === statusFilter));
-      }
-
-      if (priorityFilter !== 'All') {
-        filtered = filtered.filter((r) => r.tvs.some((tv) => tv.priority === priorityFilter));
-      }
-
-      if (daysFilter === '4+') {
-        const now = Date.now();
-        filtered = filtered.filter((r) => {
-          const recDate = new Date(r.receivedDate).getTime();
-          const diffDays = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
-          const hasNotDelivered = r.tvs.some((tv) => tv.status !== 'Delivered' && tv.status !== 'Return' && tv.status !== 'Reject');
-          return hasNotDelivered && diffDays >= 4;
+        const q = searchTerm.toLowerCase().trim();
+        const cleanDigits = q.replace(/\D/g, '');
+        // STRICT: Only search by serialNumber or mobileNumber
+        list = list.filter((r) => {
+          const matchSerial =
+            r.serialNumber.toLowerCase().includes(q) ||
+            (cleanDigits.length >= 3 && r.serialNumber.replace(/\D/g, '').includes(cleanDigits));
+          const matchMobile =
+            r.mobileNumber.includes(q) ||
+            (cleanDigits.length >= 3 && r.mobileNumber.replace(/\D/g, '').includes(cleanDigits));
+          return matchSerial || matchMobile;
         });
       }
-
-      setTotalCount(filtered.length);
-      setTotalPages(Math.ceil(filtered.length / 20) || 1);
-      const start = (page - 1) * 20;
-      setReceipts(filtered.slice(start, start + 20));
+      if (statusFilter !== 'All') {
+        list = list.filter((r) => r.tvs.some((t) => t.status === statusFilter));
+      }
+      if (priorityFilter !== 'All') {
+        list = list.filter((r) => r.tvs.some((t) => t.priority === priorityFilter));
+      }
+      if (daysFilter !== 'All') {
+        list = list.filter((r) => {
+          const diffDays = calculateDays(r.receivedDate);
+          if (daysFilter === '4+') return diffDays >= 4;
+          if (daysFilter === '0-3') return diffDays < 4;
+          return true;
+        });
+      }
+      const total = list.length;
+      setTotalCount(total);
+      setTotalPages(Math.ceil(total / 25) || 1);
+      setReceipts(list.slice((page - 1) * 25, page * 25));
     } finally {
       setLoading(false);
     }
@@ -173,6 +192,7 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
       }
       throw new Error('API delete failed');
     } catch {
+      // Local delete fallback
       deleteClientReceipt(receiptToDelete.serialNumber);
       setReceiptToDelete(null);
       await fetchReceipts();
@@ -203,13 +223,11 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
           'Repair By': r.repairBy || 'N/A',
           Priority: tv.priority,
           'Rack No': tv.rackNo || 'N/A',
-          Status: tv.status,
+          Payment: tv.paymentMethod,
           'Estimated Cost': tv.estimatedCost,
           'Actual Cost': tv.cost,
-          'Payment Method': tv.paymentMethod,
+          Status: tv.status,
           'Received Date': r.receivedDate,
-          'Revise Date': r.revisedDate || 'N/A',
-          'Out Date': r.outDate || 'N/A',
           Remarks: r.remarks || '',
         });
       });
@@ -217,29 +235,34 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Repair Receipts');
-    XLSX.writeFile(workbook, `Kruti_Electronics_Receipts_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Receipts');
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(workbook, `Receipts_${todayStr}.xlsx`);
   };
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Top Header & Export */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
-            TV Repair Job Cards
+            <span className="p-2 rounded-xl bg-red-50 text-red-600">
+              <FileSpreadsheet className="w-6 h-6" />
+            </span>
+            All Repair Receipts
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Search, filter by status, update details, print 50x25mm labels, and dispatch WhatsApp alerts.
+            Browse, search, edit, print thermal labels, or trigger WhatsApp receipts ({totalCount} total records).
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={onAddNew}
-            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/30 flex items-center gap-2 transition cursor-pointer"
+            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/25 flex items-center gap-2 transition cursor-pointer"
           >
-            <PlusCircle className="w-4 h-4" /> Add New Receipt
+            <PlusCircle className="w-4 h-4" /> Add Receipt
           </button>
 
           <button
@@ -270,18 +293,21 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by Receipt No, Customer Name, Mobile, or TV Brand..."
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-red-600 rounded-xl text-sm focus:outline-none transition"
+              placeholder="Search by Receipt No (e.g. 611-0008) or Mobile Number (e.g. 8320831115)..."
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-red-600 rounded-xl text-sm focus:outline-none transition font-medium"
             />
           </div>
 
           <button
             type="submit"
-            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
           >
             <Search className="w-4 h-4" /> Search
           </button>
         </form>
+        <div className="text-[11px] text-slate-500 flex items-center gap-1.5 -mt-1">
+          <span className="font-semibold text-slate-600">Note:</span> Search is strictly restricted to <span className="font-bold text-red-600">Receipt No</span> or <span className="font-bold text-red-600">Mobile Number</span> only (Customer Name or TV brand searches are disabled).
+        </div>
 
         {/* Filters Grid */}
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-100 text-xs font-medium">
@@ -328,9 +354,9 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
             </select>
           </div>
 
-          {/* Aging Filter */}
+          {/* Days Filter */}
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 font-semibold">Aging:</span>
+            <span className="text-slate-500 font-semibold">Age / Days:</span>
             <select
               value={daysFilter}
               onChange={(e) => {
@@ -340,119 +366,152 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
               className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-bold focus:outline-none"
             >
               <option value="All">All Days</option>
-              <option value="4+">Over 4 Days Pending (Old)</option>
+              <option value="0-3">0 – 3 Days (Fresh)</option>
+              <option value="4+">4+ Days (Old Receipt)</option>
             </select>
           </div>
+
+          {(searchTerm || statusFilter !== 'All' || priorityFilter !== 'All' || daysFilter !== 'All') && (
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setStatusFilter('All');
+                setPriorityFilter('All');
+                setDaysFilter('All');
+                setPage(1);
+              }}
+              className="text-red-600 hover:text-red-700 font-bold underline ml-auto cursor-pointer"
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Main Receipts Table */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead className="bg-slate-900 text-white font-extrabold tracking-wider uppercase text-[11px]">
+      {/* Error alert */}
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 text-red-900 rounded-2xl flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+            <span className="text-sm font-medium">{error}</span>
+          </div>
+          <button
+            onClick={fetchReceipts}
+            className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Main Table Container */}
+      <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-xs whitespace-nowrap border-collapse min-w-[960px]">
+            <thead className="bg-slate-900 text-white font-bold uppercase tracking-wider text-[11px]">
               <tr>
-                <th className="py-4 px-4">Receipt No</th>
-                <th className="py-4 px-4">Customer</th>
-                <th className="py-4 px-4">TV Unit / Model</th>
-                <th className="py-4 px-4">Problem / Fault</th>
-                <th className="py-4 px-4">Technician</th>
-                <th className="py-4 px-4">Priority</th>
-                <th className="py-4 px-4">Rack</th>
-                <th className="py-4 px-4">Payment</th>
-                <th className="py-4 px-4 text-right">Est. Cost</th>
-                <th className="py-4 px-4 text-right">Actual Cost</th>
-                <th className="py-4 px-4">Status</th>
-                <th className="py-4 px-4">Age</th>
-                <th className="py-4 px-4">Remarks</th>
-                <th className="py-4 px-4 text-center sticky right-0 bg-slate-900 z-10 shadow-l">
+                <th className="py-3 px-3">Receipt No</th>
+                <th className="py-3 px-3">Customer</th>
+                <th className="py-3 px-3">TV Unit / Model</th>
+                <th className="py-3 px-3">Problem / Fault</th>
+                <th className="py-3 px-3">Technician</th>
+                <th className="py-3 px-3 text-center">Priority</th>
+                <th className="py-3 px-3 text-center">Rack</th>
+                <th className="py-3 px-3 text-center">Payment</th>
+                <th className="py-3 px-3 text-right">Est. Cost</th>
+                <th className="py-3 px-3 text-right">Actual Cost</th>
+                <th className="py-3 px-3 text-center">Status</th>
+                <th className="py-3 px-3 text-center">Aging</th>
+                <th className="py-3 px-3 text-center sticky right-0 bg-slate-900 z-10 shadow-l">
                   Actions
                 </th>
               </tr>
             </thead>
-
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="py-12 text-center text-slate-500">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <div className="w-6 h-6 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                      <span className="font-semibold text-xs">Loading repair job cards...</span>
-                    </div>
+                  <td colSpan={13} className="py-12 text-center text-slate-500">
+                    <RefreshCw className="w-6 h-6 animate-spin mx-auto text-red-600 mb-2" />
+                    Loading receipts from database...
                   </td>
                 </tr>
               ) : receipts.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-12 text-center text-slate-500">
-                    <p className="font-bold text-sm text-slate-700">No repair receipts found.</p>
+                  <td colSpan={13} className="py-12 text-center text-slate-500">
+                    <p className="text-base font-bold text-slate-700">No receipts found.</p>
                     <p className="text-xs text-slate-400 mt-1">
-                      Try resetting your filters or click "Add New Receipt" above.
+                      Try adjusting your search criteria or add a new receipt.
                     </p>
                   </td>
                 </tr>
               ) : (
                 receipts.map((receipt) => {
-                  const now = Date.now();
-                  const recDate = new Date(receipt.receivedDate).getTime();
-                  const daysSinceReceived = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
-                  const isOldReceipt =
-                    receipt.tvs.some((tv) => tv.status !== 'Delivered' && tv.status !== 'Return' && tv.status !== 'Reject') &&
-                    daysSinceReceived >= 4;
+                  const daysSinceReceived = calculateDays(receipt.receivedDate || receipt.createdAt);
 
-                  const totalEst = receipt.tvs.reduce((acc, tv) => acc + (tv.estimatedCost || 0), 0);
-                  const totalAct = receipt.tvs.reduce((acc, tv) => acc + (tv.cost || 0), 0);
-                  const primaryStatus = receipt.tvs[0]?.status || 'Pending';
-                  const primaryPriority = receipt.tvs[0]?.priority || 'Normal';
-                  const primaryRack = receipt.tvs[0]?.rackNo || '-';
+                  const hasNonDeliveredTV = receipt.tvs.some((tv) => {
+                    const st = String(tv.status || '').toLowerCase();
+                    return st !== 'delivered' && st !== 'return' && st !== 'reject';
+                  });
+                  const isOldReceipt = daysSinceReceived >= 4 && hasNonDeliveredTV;
+
+                  const totalEst = receipt.tvs.reduce((sum, t) => sum + (t.estimatedCost || 0), 0);
+                  const totalAct = receipt.tvs.reduce((sum, t) => sum + (t.cost || 0), 0);
+
+                  const primaryStatus = receipt.tvs[0]?.status || (receipt as any).status || 'Pending';
+                  const primaryPriority = receipt.tvs[0]?.priority || (receipt as any).priority || 'Normal';
+                  const primaryRack = receipt.tvs.map((t) => t.rackNo).filter(Boolean).join(', ') || '-';
                   const paymentMethod = receipt.tvs[0]?.paymentMethod || 'Pending';
+                  const primaryFault = receipt.tvs.map((t) => t.complaint).filter(Boolean).join(', ') || '-';
 
                   return (
                     <tr
-                      key={receipt._id || receipt.serialNumber}
+                      key={receipt._id}
                       className={`hover:bg-slate-50/80 transition ${
-                        isOldReceipt ? 'bg-amber-50/30' : ''
+                        isOldReceipt ? 'bg-amber-50/50 font-medium' : ''
                       }`}
                     >
-                      {/* Serial */}
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                        {receipt.serialNumber}
+                      {/* Receipt No + Date */}
+                      <td className="py-2.5 px-3">
+                        <div className="font-mono font-extrabold text-slate-900 text-xs">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
+                            {receipt.serialNumber}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-sans mt-0.5">{receipt.receivedDate}</div>
                       </td>
 
-                      {/* Customer */}
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900">{receipt.customerName}</div>
-                        <div className="text-[11px] font-mono text-slate-500">{receipt.mobileNumber}</div>
+                      {/* Customer: Name + Mobile stacked */}
+                      <td className="py-2.5 px-3">
+                        <div className="font-black text-slate-900 text-xs tracking-tight">{receipt.customerName}</div>
+                        <div className="font-mono text-[11px] text-slate-500 font-semibold">{receipt.mobileNumber}</div>
                       </td>
 
-                      {/* TV details */}
-                      <td className="py-3 px-4">
-                        {receipt.tvs.map((tv, idx) => (
-                          <div key={idx} className="leading-tight mb-1 last:mb-0">
-                            <span className="font-extrabold text-slate-900">{tv.brand}</span>
-                            {tv.size && <span className="text-slate-500 text-[11px]"> ({tv.size})</span>}
-                            {tv.modelNumber && (
-                              <div className="text-[10px] text-slate-400 font-mono">{tv.modelNumber}</div>
-                            )}
-                          </div>
-                        ))}
+                      {/* TV Brand & Model */}
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-900 text-xs">
+                          {receipt.tvs.map((t) => `${t.brand} (${t.size || 'TV'})`).join(', ')}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate max-w-[150px]">
+                          {receipt.tvs.map((t) => t.modelNumber || 'Std').join(', ')}
+                        </div>
                       </td>
 
-                      {/* Complaint */}
-                      <td className="py-3 px-4 truncate max-w-[150px]" title={receipt.tvs.map((t) => t.complaint).join(', ')}>
-                        {receipt.tvs.map((t) => t.complaint).join(', ')}
+                      {/* Problem / Fault */}
+                      <td className="py-2.5 px-3 max-w-[160px] truncate text-slate-700 text-xs font-medium" title={primaryFault}>
+                        {primaryFault}
                       </td>
 
                       {/* Technician */}
-                      <td className="py-3 px-4 text-slate-700 font-semibold">{receipt.repairBy || '-'}</td>
+                      <td className="py-2.5 px-3 text-slate-700 font-medium">{receipt.repairBy || '-'}</td>
 
                       {/* Priority */}
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-3 text-center">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                             primaryPriority === 'Urgent'
-                              ? 'bg-red-100 text-red-900 border border-red-300'
+                              ? 'bg-red-100 text-red-800 border border-red-300'
                               : primaryPriority === 'High'
-                              ? 'bg-orange-100 text-orange-900 border border-orange-300'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : 'bg-slate-100 text-slate-700'
                           }`}
                         >
@@ -461,27 +520,27 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                       </td>
 
                       {/* Rack */}
-                      <td className="py-3 px-4 font-mono font-bold text-slate-800">{primaryRack}</td>
+                      <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">{primaryRack}</td>
 
                       {/* Payment */}
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[11px]">
                           {paymentMethod}
                         </span>
                       </td>
 
                       {/* Estimated Cost */}
-                      <td className="py-3 px-4 text-right font-medium text-slate-600">₹{totalEst}</td>
+                      <td className="py-2.5 px-3 text-right font-medium text-slate-600">₹{totalEst}</td>
 
                       {/* Actual Cost */}
-                      <td className="py-3 px-4 text-right font-extrabold text-red-600">
+                      <td className="py-2.5 px-3 text-right font-extrabold text-red-600">
                         {totalAct > 0 ? `₹${totalAct}` : '-'}
                       </td>
 
                       {/* Status */}
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-3 text-center">
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${
                             primaryStatus === 'Pending'
                               ? 'bg-amber-100 text-amber-900 border-amber-300'
                               : primaryStatus === 'Under Repair'
@@ -499,36 +558,31 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                         </span>
                       </td>
 
-                      {/* Days Elapsed */}
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-700">{daysSinceReceived}d</span>
+                      {/* Days Elapsed & Old Receipt Highlight */}
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="inline-flex items-center gap-1">
+                          <span className="font-extrabold text-slate-800 text-xs">{daysSinceReceived}d</span>
                           {isOldReceipt && (
-                            <span className="px-1.5 py-0.5 bg-red-600 text-white rounded text-[9px] font-extrabold tracking-wide uppercase shadow-xs">
-                              Old Receipt
+                            <span className="px-1 py-0.2 bg-red-600 text-white rounded text-[8px] font-black uppercase shadow-xs">
+                              Old
                             </span>
                           )}
                         </div>
                       </td>
 
-                      {/* Remarks */}
-                      <td className="py-3 px-4 truncate max-w-[140px] text-slate-500" title={receipt.remarks}>
-                        {receipt.remarks || '-'}
-                      </td>
-
                       {/* Actions */}
-                      <td className="py-3 px-4 text-center sticky right-0 bg-white shadow-l z-10">
+                      <td className="py-2.5 px-3 text-center sticky right-0 bg-white shadow-l z-10">
                         <div className="flex items-center justify-center gap-1">
-                          {/* Edit */}
+                          {/* Update */}
                           <button
                             onClick={() => onUpdate(receipt)}
                             className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                            title="Edit / Update Receipt"
+                            title="Update Receipt"
                           >
                             <Edit className="w-4 h-4" />
                           </button>
 
-                          {/* Print A4 */}
+                          {/* Print Normal Receipt */}
                           <button
                             onClick={() => onPrintA4(receipt)}
                             className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
@@ -550,16 +604,16 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
                           <button
                             onClick={() => handleWhatsApp(receipt)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                            title="Send WhatsApp Message (Half / Full Detail)"
+                            title="Send WhatsApp Message"
                           >
                             <MessageCircle className="w-4 h-4" />
                           </button>
 
-                          {/* Sticker Print */}
+                          {/* Rugtek RP-326 Thermal Sticker Print (80x30mm) */}
                           <button
                             onClick={() => onPrintSticker(receipt)}
                             className="p-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition cursor-pointer"
-                            title="50x25mm Sticker Print"
+                            title="Rugtek RP-326 Thermal Sticker Print (80×30 mm)"
                           >
                             <Tag className="w-4 h-4" />
                           </button>
@@ -582,13 +636,14 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
           </table>
         </div>
 
-        {/* Pagination Footer */}
+        {/* Pagination Footer: Exactly 25 Receipts Per Page with Next/Prev Controls */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-600">
           <div>
-            Showing Page <strong>{page}</strong> of <strong>{totalPages}</strong> ({totalCount} total receipts)
+            Showing <strong>{totalCount > 0 ? (page - 1) * 25 + 1 : 0}</strong> to{' '}
+            <strong>{Math.min(page * 25, totalCount)}</strong> of <strong>{totalCount}</strong> receipts (25 per page)
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || loading}
@@ -596,7 +651,21 @@ export const ReceiptTable: React.FC<ReceiptTableProps> = ({
             >
               <ChevronLeft className="w-4 h-4" /> Prev
             </button>
-            <span className="font-bold px-2">{page}</span>
+
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={`w-8 h-8 rounded-lg font-extrabold text-xs transition cursor-pointer ${
+                  page === p
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages || loading}

@@ -29,7 +29,8 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Kruti Electronics server running at http://0.0.0.0:${PORT}`);
+    console.log(`🚀 Kruti Electronics server running at http://localhost:${PORT}`);
+    console.log(`📡 Network access: http://127.0.0.1:${PORT}`);
     console.log(`📡 Ready to serve customer tracking and TV repair management.`);
   });
 }

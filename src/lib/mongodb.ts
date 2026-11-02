@@ -1,12 +1,12 @@
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI || '';
-
 interface MongooseCache {
   conn: typeof mongoose | null;
-  promise: Promise<typeof mongoose> | null;
+  promise: Promise<typeof mongoose | null> | null;
   lastAttempt: number;
   lastError: string | null;
+  lastUri: string | null;
+  authFailed: boolean;
 }
 
 declare global {
@@ -19,34 +19,58 @@ const cached: MongooseCache = global.mongooseCache || {
   promise: null,
   lastAttempt: 0,
   lastError: null,
+  lastUri: null,
+  authFailed: false,
 };
 
 if (!global.mongooseCache) {
   global.mongooseCache = cached;
 }
 
-// Cooldown period in ms if Atlas connection fails (15 seconds)
-// Prevents every API request from hanging for 5 seconds when Atlas is unreachable
-const RETRY_COOLDOWN_MS = 15000;
+// Cooldown period in ms if Atlas connection fails:
+// 30 seconds for transient network blips
+// 1 hour for bad credentials/auth failure (prevents infinite warning loop & hanging user requests)
+const RETRY_COOLDOWN_MS = 30000;
+const AUTH_FAILURE_COOLDOWN_MS = 3600000;
 
 export async function connectToDatabase(): Promise<{
   isAtlas: boolean;
   mongoose: typeof mongoose | null;
   error?: string | null;
 }> {
-  if (!MONGODB_URI) {
+  const uri = process.env.MONGODB_URI?.trim() || '';
+
+  if (!uri) {
     // MongoDB URI not set yet, seamlessly fallback to local JSON database
     return { isAtlas: false, mongoose: null };
   }
+
+  // If URI changed, reset the cache so the app tries the new credentials immediately
+  if (cached.lastUri && cached.lastUri !== uri) {
+    cached.lastAttempt = 0;
+    cached.lastError = null;
+    cached.authFailed = false;
+    cached.promise = null;
+    if (cached.conn) {
+      try {
+        await mongoose.disconnect();
+      } catch {
+        // ignore
+      }
+      cached.conn = null;
+    }
+  }
+  cached.lastUri = uri;
 
   // If already connected and connection is alive
   if (cached.conn && mongoose.connection.readyState === 1) {
     return { isAtlas: true, mongoose: cached.conn };
   }
 
-  // If we had a failure recently, don't stall the user request for 5 seconds
+  // Check cooldown to ensure user requests don't stall for 5 seconds
   const timeSinceLastAttempt = Date.now() - cached.lastAttempt;
-  if (!cached.conn && cached.lastError && timeSinceLastAttempt < RETRY_COOLDOWN_MS) {
+  const cooldown = cached.authFailed ? AUTH_FAILURE_COOLDOWN_MS : RETRY_COOLDOWN_MS;
+  if (!cached.conn && cached.lastError && timeSinceLastAttempt < cooldown) {
     return { isAtlas: false, mongoose: null, error: cached.lastError };
   }
 
@@ -59,27 +83,45 @@ export async function connectToDatabase(): Promise<{
     };
 
     cached.promise = mongoose
-      .connect(MONGODB_URI, opts)
+      .connect(uri, opts)
       .then((m) => {
         console.log('✅ Successfully connected to MongoDB Atlas');
         cached.conn = m;
         cached.lastError = null;
+        cached.authFailed = false;
         return m;
       })
       .catch((err) => {
-        console.warn('⚠️ MongoDB Atlas connection warning:', err.message);
-        cached.lastError = err.message;
+        const isAuthError =
+          /auth|credential|unauthorized/i.test(err?.message || '') ||
+          err?.code === 18 ||
+          err?.codeName === 'AuthenticationFailed';
+
+        cached.lastError = err?.message || 'Atlas connection error';
+        cached.authFailed = isAuthError;
         cached.promise = null;
         cached.conn = null;
-        throw err;
+
+        if (isAuthError) {
+          console.log(
+            '[Database] Notice: MongoDB Atlas credentials in MONGODB_URI require verification. Operating smoothly in local storage fallback mode.'
+          );
+        } else {
+          console.log(`[Database] MongoDB Atlas status notice: ${err?.message || 'unavailable'}. Using local storage engine.`);
+        }
+        return null;
       });
   }
 
   try {
-    cached.conn = await cached.promise;
-    return { isAtlas: true, mongoose: cached.conn };
+    const conn = await cached.promise;
+    if (conn && mongoose.connection.readyState === 1) {
+      cached.conn = conn;
+      return { isAtlas: true, mongoose: cached.conn };
+    }
+    return { isAtlas: false, mongoose: null, error: cached.lastError || 'Not connected' };
   } catch (error: any) {
-    console.error('MongoDB Atlas connection failed. Falling back to local storage:', error?.message);
+    console.log('[Database] Atlas connection fallback to local storage:', error?.message);
     cached.promise = null;
     cached.conn = null;
     return { isAtlas: false, mongoose: null, error: error?.message };
@@ -87,12 +129,13 @@ export async function connectToDatabase(): Promise<{
 }
 
 export function getDatabaseStatus() {
+  const uri = process.env.MONGODB_URI?.trim() || '';
   const isConnected = Boolean(cached.conn && mongoose.connection.readyState === 1);
   return {
-    isConfigured: Boolean(MONGODB_URI),
+    isConfigured: Boolean(uri),
     isConnected,
     mode: isConnected ? 'atlas' : 'local',
+    authFailed: cached.authFailed,
     lastError: cached.lastError,
   };
 }
-

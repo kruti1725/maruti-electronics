@@ -60,7 +60,7 @@ const DEFAULT_INITIAL_RECEIPTS: IReceipt[] = [
     _id: 'rec_102',
     serialNumber: 'KR00102',
     customerName: 'Sweta Desai',
-    mobileNumber: '8511296117',
+    mobileNumber: '7778833577',
     receivedDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     repairBy: 'Vikram Bhai',
     remarks: 'Urgent delivery needed for shop showroom',
@@ -141,7 +141,6 @@ function ensureStorage() {
     }
   } catch (err) {
     // Read-only filesystem warning, fallback to in-memory store
-    // console.warn('Local file storage is unavailable, using in-memory store:', err);
   }
 }
 
@@ -200,7 +199,29 @@ function writeLocalUsers(users: any[]) {
 }
 
 /**
- * Get all receipts with search and filters
+ * Robust calendar day difference calculation (midnight to midnight)
+ * Prevents timezone/hour shifts from making same-day receipts show different days
+ */
+export function calculateReceiptDays(receivedDate: string): number {
+  if (!receivedDate) return 0;
+  const dateOnly = receivedDate.split('T')[0];
+  const parts = dateOnly.split('-');
+  if (parts.length !== 3) return 0;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+
+  const receivedMidnight = new Date(year, month, day).getTime();
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const diffMs = todayMidnight - receivedMidnight;
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
+/**
+ * Get all receipts with search and filters (default 25 receipts per page)
  */
 export async function getReceipts(params: {
   search?: string;
@@ -212,21 +233,27 @@ export async function getReceipts(params: {
 }) {
   const { isAtlas } = await connectToDatabase();
   const page = Math.max(1, params.page || 1);
-  const limit = Math.max(1, params.limit || 20);
+  const limit = Math.max(1, params.limit || 25);
 
   if (isAtlas) {
     try {
       const query: any = {};
 
       if (params.search) {
-        const regex = new RegExp(params.search.trim(), 'i');
-        query.$or = [
+        const clean = params.search.trim();
+        const cleanDigits = clean.replace(/\D/g, '');
+        const regex = new RegExp(clean.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'i');
+        // STRICT: Only search by serialNumber or mobileNumber
+        // (Customer name, TV brand, model, and complaint are strictly excluded)
+        const orList: any[] = [
           { serialNumber: regex },
-          { customerName: regex },
           { mobileNumber: regex },
-          { 'tvs.brand': regex },
-          { 'tvs.modelNumber': regex },
         ];
+        if (cleanDigits.length >= 3) {
+          orList.push({ mobileNumber: new RegExp(cleanDigits) });
+          orList.push({ serialNumber: new RegExp(cleanDigits) });
+        }
+        query.$or = orList;
       }
 
       if (params.status && params.status !== 'All') {
@@ -251,10 +278,8 @@ export async function getReceipts(params: {
 
       // Days filter if specified
       if (params.days && params.days !== 'All') {
-        const now = Date.now();
         receipts = receipts.filter((r) => {
-          const recDate = new Date(r.receivedDate).getTime();
-          const diffDays = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
+          const diffDays = calculateReceiptDays(r.receivedDate || r.createdAt);
           if (params.days === '4+') {
             return diffDays >= 4;
           }
@@ -282,18 +307,17 @@ export async function getReceipts(params: {
 
   if (params.search) {
     const q = params.search.toLowerCase().trim();
-    receipts = receipts.filter(
-      (r) =>
+    const cleanDigits = q.replace(/\D/g, '');
+    // STRICT: Only match serialNumber or mobileNumber (no customer name or TV brand)
+    receipts = receipts.filter((r) => {
+      const matchSerial =
         r.serialNumber.toLowerCase().includes(q) ||
-        r.customerName.toLowerCase().includes(q) ||
-        r.mobileNumber.includes(q) ||
-        r.tvs.some(
-          (t) =>
-            t.brand.toLowerCase().includes(q) ||
-            t.modelNumber.toLowerCase().includes(q) ||
-            t.complaint.toLowerCase().includes(q)
-        )
-    );
+        (cleanDigits.length >= 3 && r.serialNumber.replace(/\D/g, '').includes(cleanDigits));
+      const matchMobile =
+        r.mobileNumber.toLowerCase().includes(q) ||
+        (cleanDigits.length >= 3 && r.mobileNumber.replace(/\D/g, '').includes(cleanDigits));
+      return matchSerial || matchMobile;
+    });
   }
 
   if (params.status && params.status !== 'All') {
@@ -305,10 +329,8 @@ export async function getReceipts(params: {
   }
 
   if (params.days && params.days !== 'All') {
-    const now = Date.now();
     receipts = receipts.filter((r) => {
-      const recDate = new Date(r.receivedDate).getTime();
-      const diffDays = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
+      const diffDays = calculateReceiptDays(r.receivedDate || r.createdAt);
       if (params.days === '4+') {
         return diffDays >= 4;
       }
@@ -396,6 +418,53 @@ export async function createReceipt(data: Omit<IReceipt, '_id' | 'createdAt' | '
   }
 
   const now = new Date().toISOString();
+
+  const { isAtlas } = await connectToDatabase();
+  if (isAtlas) {
+    try {
+      const atlasPayload = {
+        serialNumber: cleanSerial,
+        customerName: data.customerName.trim(),
+        mobileNumber: data.mobileNumber.trim(),
+        receivedDate: data.receivedDate,
+        revisedDate: (data.revisedDate || '').trim(),
+        outDate: (data.outDate || '').trim(),
+        repairBy: (data.repairBy || '').trim(),
+        remarks: (data.remarks || '').trim(),
+        tvs: data.tvs.map((tv) => ({
+          brand: tv.brand.trim(),
+          modelNumber: (tv.modelNumber || '').trim(),
+          size: (tv.size || '').trim(),
+          complaint: tv.complaint.trim(),
+          estimatedCost: Number(tv.estimatedCost) || 0,
+          cost: Number(tv.cost) || 0,
+          status: tv.status || 'Pending',
+          priority: tv.priority || 'Normal',
+          rackNo: (tv.rackNo || '').trim(),
+          paymentMethod: tv.paymentMethod || 'Pending',
+        })),
+      };
+
+      const created = await ReceiptModel.create(atlasPayload);
+      const obj = created.toObject();
+      return {
+        ...obj,
+        _id: created._id.toString(),
+        createdAt: (obj as any).createdAt ? new Date((obj as any).createdAt).toISOString() : now,
+        updatedAt: (obj as any).updatedAt ? new Date((obj as any).updatedAt).toISOString() : now,
+        tvs: obj.tvs.map((t: any) => ({
+          ...t,
+          _id: t._id?.toString() || '',
+        })),
+      } as IReceipt;
+    } catch (e: any) {
+      if (e.code === 11000) {
+        throw new Error('Receipt number already exists.');
+      }
+      throw e;
+    }
+  }
+
   const newReceipt: IReceipt = {
     ...data,
     _id: 'rec_' + Date.now() + Math.random().toString(36).substring(2, 6),
@@ -409,19 +478,6 @@ export async function createReceipt(data: Omit<IReceipt, '_id' | 'createdAt' | '
     createdAt: now,
     updatedAt: now,
   };
-
-  const { isAtlas } = await connectToDatabase();
-  if (isAtlas) {
-    try {
-      const created = await ReceiptModel.create(newReceipt);
-      return { ...created.toObject(), _id: created._id.toString() } as IReceipt;
-    } catch (e: any) {
-      if (e.code === 11000) {
-        throw new Error('Receipt number already exists.');
-      }
-      throw e;
-    }
-  }
 
   const list = readLocalReceipts();
   list.unshift(newReceipt);
@@ -443,6 +499,48 @@ export async function updateReceipt(
   }
 
   const now = new Date().toISOString();
+
+  const { isAtlas } = await connectToDatabase();
+  if (isAtlas) {
+    try {
+      const updatePayload: any = { ...data, updatedAt: now };
+      if (data.tvs) {
+        updatePayload.tvs = data.tvs.map((tv) => ({
+          brand: tv.brand.trim(),
+          modelNumber: (tv.modelNumber || '').trim(),
+          size: (tv.size || '').trim(),
+          complaint: tv.complaint.trim(),
+          estimatedCost: Number(tv.estimatedCost) || 0,
+          cost: Number(tv.cost) || 0,
+          status: tv.status || 'Pending',
+          priority: tv.priority || 'Normal',
+          rackNo: (tv.rackNo || '').trim(),
+          paymentMethod: tv.paymentMethod || 'Pending',
+        }));
+      }
+
+      const updated = await ReceiptModel.findOneAndUpdate(
+        { serialNumber: cleanSerial },
+        updatePayload,
+        { new: true }
+      ).lean();
+      if (updated) {
+        return {
+          ...updated,
+          _id: (updated as any)._id.toString(),
+          createdAt: (updated as any).createdAt ? new Date((updated as any).createdAt).toISOString() : existing.createdAt,
+          updatedAt: (updated as any).updatedAt ? new Date((updated as any).updatedAt).toISOString() : now,
+          tvs: (updated as any).tvs.map((t: any) => ({
+            ...t,
+            _id: t._id?.toString() || '',
+          })),
+        } as IReceipt;
+      }
+    } catch (e) {
+      console.warn('Atlas error updating receipt:', e);
+    }
+  }
+
   const updatedTvs = data.tvs
     ? data.tvs.map((tv, idx) => ({
         ...tv,
@@ -451,26 +549,6 @@ export async function updateReceipt(
         cost: Number(tv.cost) || 0,
       }))
     : existing.tvs;
-
-  const { isAtlas } = await connectToDatabase();
-  if (isAtlas) {
-    try {
-      const updated = await ReceiptModel.findOneAndUpdate(
-        { serialNumber: cleanSerial },
-        {
-          ...data,
-          tvs: updatedTvs,
-          updatedAt: now,
-        },
-        { new: true }
-      ).lean();
-      if (updated) {
-        return { ...updated, _id: (updated as any)._id.toString() } as IReceipt;
-      }
-    } catch (e) {
-      console.warn('Atlas error updating receipt:', e);
-    }
-  }
 
   const list = readLocalReceipts();
   const index = list.findIndex((r) => r.serialNumber.toUpperCase() === cleanSerial);
@@ -517,12 +595,46 @@ export async function deleteReceipt(serialNumber: string): Promise<boolean> {
 }
 
 /**
+ * Auto-generate next 7-digit receipt number (format 611-XXXX)
+ * E.g., if highest existing is 611-0008, next is 611-0009
+ */
+export async function getNextReceiptNumber(): Promise<string> {
+  const { receipts } = await getReceipts({ limit: 10000 });
+  let highestNum = 0;
+
+  for (const r of receipts) {
+    const s = String(r.serialNumber || '').trim();
+    // Check 611-0008 or 6110008
+    const m611 = s.match(/611[-_]?(\d+)/i);
+    if (m611) {
+      const val = parseInt(m611[1], 10);
+      if (!isNaN(val) && val > highestNum) {
+        highestNum = val;
+      }
+      continue;
+    }
+
+    // Check general numeric or KR suffix
+    const mDigits = s.match(/(\d{3,})$/);
+    if (mDigits) {
+      const val = parseInt(mDigits[1], 10);
+      if (!isNaN(val) && val > highestNum) {
+        highestNum = val;
+      }
+    }
+  }
+
+  const nextVal = highestNum > 0 ? highestNum + 1 : 1;
+  return `611-${String(nextVal).padStart(4, '0')}`;
+}
+
+/**
  * Get dashboard statistics
  */
 export async function getDashboardStats(): Promise<DashboardStats> {
   const { receipts } = await getReceipts({ limit: 10000 });
-  const todayStr = new Date().toISOString().split('T')[0];
-  const now = Date.now();
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   let totalReceipts = receipts.length;
   let totalTVs = 0;
@@ -530,39 +642,57 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   let underRepair = 0;
   let ready = 0;
   let delivered = 0;
+  let returned = 0;
+  let rejected = 0;
   let todayReceipts = 0;
   let oldReceipts = 0;
   let urgentReceipts = 0;
 
   for (const r of receipts) {
-    // Check if received today
-    if (r.receivedDate === todayStr) {
+    // Check if received today (calendar date comparison)
+    const rDateStr = (r.receivedDate || r.createdAt || '').split('T')[0];
+    if (rDateStr === todayStr) {
       todayReceipts++;
     }
 
-    // Check days old
-    const recTime = new Date(r.receivedDate).getTime();
-    const daysDiff = Math.floor((now - recTime) / (1000 * 60 * 60 * 24));
-
+    const daysDiff = calculateReceiptDays(r.receivedDate || r.createdAt);
     let receiptHasNonDelivered = false;
 
-    for (const tv of r.tvs) {
-      totalTVs++;
-      if (tv.status === 'Pending') pending++;
-      else if (tv.status === 'Under Repair') underRepair++;
-      else if (tv.status === 'Ready') ready++;
-      else if (tv.status === 'Delivered') delivered++;
+    // Support both r.tvs array and legacy root fields
+    const tvList = Array.isArray(r.tvs) && r.tvs.length > 0 ? r.tvs : [r as any];
 
-      if (tv.status !== 'Delivered') {
+    for (const tv of tvList) {
+      totalTVs++;
+      const st = String(tv.status || (r as any).status || 'Pending').trim().toLowerCase();
+      const pr = String(tv.priority || (r as any).priority || 'Normal').trim().toLowerCase();
+
+      if (st === 'pending') {
+        pending++;
+      } else if (st === 'under repair' || st === 'underrepair' || st === 'under_repair') {
+        underRepair++;
+      } else if (st === 'ready') {
+        ready++;
+      } else if (st === 'delivered') {
+        delivered++;
+      } else if (st === 'return' || st === 'returned') {
+        returned++;
+      } else if (st === 'reject' || st === 'rejected') {
+        rejected++;
+      } else {
+        pending++;
+      }
+
+      const isCompleted = st === 'delivered' || st === 'return' || st === 'returned' || st === 'reject' || st === 'rejected';
+      if (!isCompleted) {
         receiptHasNonDelivered = true;
       }
 
-      if (tv.priority === 'Urgent' && tv.status !== 'Delivered') {
+      if (pr === 'urgent' && !isCompleted) {
         urgentReceipts++;
       }
     }
 
-    // Old receipt rule: older than 4 days AND TV is not Delivered
+    // Old receipt rule: older than 4 calendar days AND not delivered/closed
     if (daysDiff >= 4 && receiptHasNonDelivered) {
       oldReceipts++;
     }
@@ -574,10 +704,19 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     pending,
     underRepair,
     ready,
+    completed: ready,
     delivered,
+    cancel: rejected,
+    totalLoss: returned,
+    returned,
+    rejected,
     todayReceipts,
     oldReceipts,
+    overdueCount: oldReceipts,
     urgentReceipts,
+    totalCost: 0,
+    totalPaid: 0,
+    totalPendingDue: 0,
   };
 }
 

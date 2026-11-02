@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Tv, Calendar, User, Phone, CheckCircle2, AlertCircle, Wrench, ShieldAlert, ArrowLeft, Printer, RefreshCw } from 'lucide-react';
+import { Tv, Calendar, User, Phone, CheckCircle2, AlertCircle, Wrench, ShieldAlert, ArrowLeft, Printer, RefreshCw } from 'lucide-react';
 import { IReceipt, TVStatus } from '../types/receipt';
-import { searchClientReceipt } from '../lib/client-storage';
+import { searchClientReceiptByMobile } from '../lib/client-storage';
 
 interface SearchReceiptProps {
   initialSerial?: string;
@@ -14,16 +14,24 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
   onNavigateHome,
   onPrintReceipt,
 }) => {
-  const [searchTerm, setSearchTerm] = useState(initialSerial);
+  // Only extract digits if an initial 10-digit mobile was passed
+  const initialDigits = initialSerial.replace(/\D/g, '').slice(0, 10);
+  const [searchTerm, setSearchTerm] = useState(initialDigits);
   const [loading, setLoading] = useState(false);
   const [receipts, setReceipts] = useState<IReceipt[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
   const handleSearch = async (termToSearch?: string) => {
-    const query = (termToSearch !== undefined ? termToSearch : searchTerm).trim();
-    if (!query) {
-      setError('Please enter a Receipt Number or 10-digit Mobile Number.');
+    const raw = (termToSearch !== undefined ? termToSearch : searchTerm).trim();
+    const cleanDigits = raw.replace(/\D/g, '');
+
+    // Strictly validate 10-digit mobile number
+    if (!cleanDigits || cleanDigits.length !== 10) {
+      setError(
+        'Kripya apna 10-digit registered mobile number enter karein. Customer tracking sirf mobile number se allowed hai (Customer Name ya Receipt Number se search karna allowed nahi hai).'
+      );
+      setReceipts([]);
       return;
     }
 
@@ -33,38 +41,23 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
     setHasSearched(true);
 
     try {
-      const cleanDigits = query.replace(/\D/g, '');
-      const isMobile = cleanDigits.length === 10;
-
-      if (isMobile) {
-        // Search by mobile
-        const res = await fetch(`/api/receipts/mobile/${cleanDigits}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.receipts) {
-            setReceipts(data.receipts);
-            return;
-          }
-        }
-      } else {
-        // Search by serial number
-        const res = await fetch(`/api/receipts/${encodeURIComponent(query.toUpperCase())}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.receipt) {
-            setReceipts([data.receipt]);
-            return;
-          }
+      // Search strictly by registered 10-digit mobile number
+      const res = await fetch(`/api/receipts/mobile/${cleanDigits}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.receipts && data.receipts.length > 0) {
+          setReceipts(data.receipts);
+          return;
         }
       }
       throw new Error('Fallback search');
     } catch {
-      // Local storage search fallback
-      const found = searchClientReceipt(query);
+      // Local storage search strictly by mobile number
+      const found = searchClientReceiptByMobile(cleanDigits);
       if (found.length > 0) {
         setReceipts(found);
       } else {
-        setError('No TV repair receipt found for this serial or mobile number.');
+        setError(`Mobile number "${cleanDigits}" par koi repair receipt nahi mili. Kripya apna registered number check karein.`);
       }
     } finally {
       setLoading(false);
@@ -72,11 +65,11 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
   };
 
   useEffect(() => {
-    if (initialSerial) {
-      setSearchTerm(initialSerial);
-      handleSearch(initialSerial);
+    if (initialDigits && initialDigits.length === 10) {
+      setSearchTerm(initialDigits);
+      handleSearch(initialDigits);
     }
-  }, [initialSerial]);
+  }, [initialDigits]);
 
   const getStatusBadge = (status: TVStatus) => {
     switch (status) {
@@ -108,6 +101,20 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
             Delivered
           </span>
         );
+      case 'Return':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300">
+            <span className="w-2 h-2 rounded-full bg-purple-600" />
+            Return
+          </span>
+        );
+      case 'Reject':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-900 border border-rose-300">
+            <span className="w-2 h-2 rounded-full bg-rose-600" />
+            Reject
+          </span>
+        );
       default:
         return null;
     }
@@ -124,7 +131,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
           <ArrowLeft className="w-4 h-4" /> Back to Home
         </button>
         <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg">
-          Live Tracking
+          Customer Portal (Mobile Search Only)
         </span>
       </div>
 
@@ -132,13 +139,16 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200/80 p-6 sm:p-8 mb-8">
         <div className="max-w-2xl mx-auto text-center mb-6">
           <div className="inline-flex p-3 rounded-2xl bg-red-50 text-red-600 mb-3">
-            <Search className="w-7 h-7" />
+            <Phone className="w-7 h-7" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-            Check TV Repair Status
+            Customer TV Repair Tracking
           </h1>
           <p className="text-sm text-slate-600 mt-2">
-            Enter your <strong className="text-slate-900">Receipt / Serial Number</strong> (e.g. KR00101) or registered <strong className="text-slate-900">10-Digit Mobile Number</strong>.
+            Apna registered <strong className="text-slate-900">10-Digit Mobile Number</strong> (e.g. 8320831115) enter karein aur live status check karein.
+          </p>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 inline-block">
+            <strong>Security Notice:</strong> Customer status check sirf <strong>Mobile Number</strong> se allowed hai (Name ya Receipt No se search nahi ho sakti).
           </p>
         </div>
 
@@ -152,17 +162,22 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                <Search className="w-5 h-5" />
+                <Phone className="w-5 h-5 text-red-600" />
               </div>
               <input
-                type="text"
+                type="tel"
+                inputMode="numeric"
+                pattern="[0-9]{10}"
+                maxLength={10}
                 value={searchTerm}
                 onChange={(e) => {
-                  setSearchTerm(e.target.value);
+                  // Only allow digits up to 10
+                  const clean = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setSearchTerm(clean);
                   if (error) setError(null);
                 }}
-                placeholder="e.g. KR00101 or 9876543210"
-                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-2 border-slate-200 focus:border-red-600 focus:bg-white focus:outline-none rounded-2xl text-slate-900 font-medium placeholder-slate-400 transition"
+                placeholder="Enter 10-digit registered Mobile Number (e.g. 8320831115)..."
+                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-2 border-slate-200 focus:border-red-600 focus:bg-white focus:outline-none rounded-2xl text-slate-900 font-bold placeholder-slate-400 tracking-wide transition"
               />
             </div>
             <button
@@ -177,7 +192,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
                 </>
               ) : (
                 <>
-                  <Search className="w-5 h-5" />
+                  <Phone className="w-5 h-5" />
                   Track Status
                 </>
               )}
@@ -187,36 +202,36 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
 
         {/* Quick sample chips */}
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
-          <span>Quick search samples:</span>
+          <span>Search sample numbers:</span>
           <button
             type="button"
             onClick={() => {
-              setSearchTerm('KR00101');
-              handleSearch('KR00101');
+              setSearchTerm('8320831115');
+              handleSearch('8320831115');
             }}
             className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
           >
-            KR00101
+            8320831115
           </button>
           <button
             type="button"
             onClick={() => {
-              setSearchTerm('KR00102');
-              handleSearch('KR00102');
+              setSearchTerm('9876543210');
+              handleSearch('9876543210');
             }}
             className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
           >
-            KR00102
+            9876543210
           </button>
           <button
             type="button"
             onClick={() => {
-              setSearchTerm('8511296117');
-              handleSearch('8511296117');
+              setSearchTerm('7778833577');
+              handleSearch('7778833577');
             }}
             className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
           >
-            8511296117
+            7778833577
           </button>
         </div>
       </div>
@@ -230,8 +245,8 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
             <p className="text-sm text-red-700 mt-1">{error}</p>
             <p className="text-xs text-red-600 mt-2 font-medium">
               Need assistance? Call Kruti Electronics help desk directly at{' '}
-              <a href="tel:8511296117" className="underline font-bold">
-                +91 85112 96117
+              <a href="tel:07778833577" className="underline font-bold">
+                +91 77788 33577
               </a>
               .
             </p>
@@ -316,6 +331,26 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
                     </div>
                   </div>
 
+                  {receipt.revisedDate && (
+                    <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                      <Calendar className="w-5 h-5 text-blue-600" />
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium">Revise Date (Expected)</p>
+                        <p className="font-bold text-slate-900">{receipt.revisedDate}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {receipt.outDate && (
+                    <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                      <Calendar className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium">Out Date (Delivered)</p>
+                        <p className="font-bold text-slate-900">{receipt.outDate}</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
                     <Wrench className="w-5 h-5 text-red-600" />
                     <div>
@@ -325,7 +360,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
                   </div>
                 </div>
 
-                {/* TVs In This Receipt (Section 4 & 5 support) */}
+                {/* TVs In This Receipt */}
                 <div className="p-6 sm:p-8 space-y-6">
                   <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                     <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
@@ -444,12 +479,12 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
           <h3 className="text-base font-bold text-slate-800">Track Your TV in 3 Easy Steps</h3>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-left text-xs text-slate-600">
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span className="font-bold text-red-600 block mb-1">1. Find Receipt</span>
-              Check the serial number on the printed job card slip or receipt given to you.
+              <span className="font-bold text-red-600 block mb-1">1. Registered Mobile</span>
+              Use the same 10-digit mobile number provided at the time of booking.
             </div>
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span className="font-bold text-red-600 block mb-1">2. Enter Details</span>
-              Type the serial number (e.g. KR00101) or your 10-digit mobile number above.
+              <span className="font-bold text-red-600 block mb-1">2. Enter 10 Digits</span>
+              Type your 10-digit number above to securely fetch all your repair job cards.
             </div>
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
               <span className="font-bold text-red-600 block mb-1">3. Live Status</span>

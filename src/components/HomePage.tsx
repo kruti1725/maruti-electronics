@@ -225,7 +225,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl flex items-center gap-2 transition"
             >
               <PhoneCall className="w-4 h-4 text-red-500" />
-              Call +91 85112 96117
+              Call +91 7778833577
             </a>
           </div>
         </div>

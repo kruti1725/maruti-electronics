@@ -101,17 +101,18 @@ export function getClientReceipts(): IReceipt[] {
 export function saveClientReceipt(receiptData: any): IReceipt {
   const current = getClientReceipts();
   
-  // Generate next serial number
-  let nextNum = 101;
+  // Generate next 7-digit 611-XXXX serial number automatically
+  let nextNum = 1;
   current.forEach((r) => {
-    const m = r.serialNumber.match(/KR(\d+)/i);
+    const s = String(r.serialNumber || '');
+    const m = s.match(/611[-_]?(\d+)/i) || s.match(/(\d{3,})$/);
     if (m) {
       const val = parseInt(m[1], 10);
       if (val >= nextNum) nextNum = val + 1;
     }
   });
 
-  const serialNumber = receiptData.serialNumber || `KR${nextNum.toString().padStart(5, '0')}`;
+  const serialNumber = receiptData.serialNumber || `611-${nextNum.toString().padStart(4, '0')}`;
   const now = new Date().toISOString();
 
   const newReceipt: IReceipt = {
@@ -196,63 +197,80 @@ export function deleteClientReceipt(serialNumber: string): boolean {
   return false;
 }
 
+export function searchClientReceiptByMobile(mobile: string): IReceipt[] {
+  const cleanDigits = mobile.replace(/\D/g, '');
+  if (cleanDigits.length !== 10) return [];
+  const receipts = getClientReceipts();
+  return receipts.filter((r) => r.mobileNumber.replace(/\D/g, '') === cleanDigits);
+}
+
 export function searchClientReceipt(term: string): IReceipt[] {
   const clean = term.trim();
   const receipts = getClientReceipts();
   const cleanDigits = clean.replace(/\D/g, '');
-
-  if (cleanDigits.length === 10) {
-    return receipts.filter((r) => r.mobileNumber.replace(/\D/g, '') === cleanDigits);
-  }
-
-  const upper = clean.toUpperCase();
-  const exact = receipts.find((r) => r.serialNumber.toUpperCase() === upper);
-  if (exact) return [exact];
-
   const lower = clean.toLowerCase();
-  return receipts.filter(
-    (r) =>
+
+  // STRICT: Only match serial number or mobile number (customer name and TV brand searches are excluded)
+  return receipts.filter((r) => {
+    const matchSerial =
       r.serialNumber.toLowerCase().includes(lower) ||
-      r.customerName.toLowerCase().includes(lower) ||
-      r.mobileNumber.includes(clean)
-  );
+      (cleanDigits.length >= 3 && r.serialNumber.replace(/\D/g, '').includes(cleanDigits));
+    const matchMobile =
+      r.mobileNumber.includes(clean) ||
+      (cleanDigits.length >= 3 && r.mobileNumber.replace(/\D/g, '').includes(cleanDigits));
+    return matchSerial || matchMobile;
+  });
 }
 
 export function getClientDashboardStats(): DashboardStats {
   const receipts = getClientReceipts();
-  const now = Date.now();
-  const todayStr = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
   let totalTVs = 0;
   let pending = 0;
   let underRepair = 0;
   let ready = 0;
   let delivered = 0;
+  let returned = 0;
+  let rejected = 0;
   let urgentReceipts = 0;
   let oldReceipts = 0;
   let todayReceipts = 0;
 
   receipts.forEach((r) => {
-    const isToday = (r.receivedDate && r.receivedDate.startsWith(todayStr)) || r.createdAt.startsWith(todayStr);
-    if (isToday) todayReceipts++;
+    const rDateStr = (r.receivedDate || r.createdAt || '').split('T')[0];
+    if (rDateStr === todayStr) todayReceipts++;
 
-    const recDate = new Date(r.receivedDate || r.createdAt).getTime();
-    const diffDays = Math.floor((now - recDate) / (1000 * 60 * 60 * 24));
+    let diffDays = 0;
+    const parts = rDateStr.split('-');
+    if (parts.length === 3) {
+      const recMidnight = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).getTime();
+      diffDays = Math.max(0, Math.round((todayMidnight - recMidnight) / (1000 * 60 * 60 * 24)));
+    }
 
     let hasUrgent = false;
     let hasNotDelivered = false;
 
     (r.tvs || []).forEach((tv) => {
       totalTVs++;
-      if (tv.status === 'Pending') pending++;
-      if (tv.status === 'Under Repair') underRepair++;
-      if (tv.status === 'Ready') ready++;
-      if (tv.status === 'Delivered') delivered++;
+      const st = String(tv.status || (r as any).status || 'Pending').trim().toLowerCase();
+      const pr = String(tv.priority || (r as any).priority || 'Normal').trim().toLowerCase();
 
-      if (tv.status !== 'Delivered') {
+      if (st === 'pending') pending++;
+      else if (st === 'under repair' || st === 'underrepair' || st === 'under_repair') underRepair++;
+      else if (st === 'ready') ready++;
+      else if (st === 'delivered') delivered++;
+      else if (st === 'return' || st === 'returned') returned++;
+      else if (st === 'reject' || st === 'rejected') rejected++;
+      else pending++;
+
+      const isClosed = st === 'delivered' || st === 'return' || st === 'returned' || st === 'reject' || st === 'rejected';
+      if (!isClosed) {
         hasNotDelivered = true;
       }
-      if (tv.priority === 'Urgent' && tv.status !== 'Delivered') {
+      if (pr === 'urgent' && !isClosed) {
         hasUrgent = true;
       }
     });
@@ -267,9 +285,18 @@ export function getClientDashboardStats(): DashboardStats {
     pending,
     underRepair,
     ready,
+    completed: ready,
     delivered,
+    cancel: rejected,
+    totalLoss: returned,
+    returned,
+    rejected,
     todayReceipts,
     oldReceipts,
+    overdueCount: oldReceipts,
     urgentReceipts,
+    totalCost: 0,
+    totalPaid: 0,
+    totalPendingDue: 0,
   };
 }

@@ -14,10 +14,10 @@ interface StickerPrintProps {
 /**
  * Rugtek RP-326 / 80mm Thermal Printer Direct Sticker Print
  * Calibrated specifically for Rugtek RP-326 80mm x 30mm Sticker Labels:
- * - NO Shop Name text in header (ONLY Official Kruti Logo)
+ * - NO Shop Name text in header (ONLY Official Kruti Logo) as requested
+ * - NO Barcode (High-legibility text details)
  * - Exact 80mm x 30mm label size (@page size: 80mm 30mm; margin: 0mm !important;)
  * - Zero top whitespace - starts immediately from the top edge
- * - Horizontal layout: Left side (Customer + TV info) | Right side (Clear Barcode)
  */
 export function printStickerDirect(
   receipt: IReceipt,
@@ -87,7 +87,7 @@ export function printStickerDirect(
 
   if (size === '80x30') {
     // 80x30mm Rugtek RP-326 Thermal Sticker
-    // ONLY LOGO (NO SHOP NAME TEXT) + HELPLINE IN HEADER
+    // ONLY LOGO (NO SHOP NAME TEXT) + HELPLINE IN HEADER + NO BARCODE (FULL DETAIL LAYOUT)
     bodyContent = `
       <div class="sticker-80x30">
         <!-- Top Bar: ONLY LOGO (No name text) + Helpline -->
@@ -96,44 +96,38 @@ export function printStickerDirect(
           <div class="s80-phone">TEL: 099045 88634</div>
         </div>
 
-        <!-- Main Body: Two Columns (Left Details + Right Barcode) -->
+        <!-- Main Body: Clean High-Legibility Details (No Barcode) -->
         <div class="s80-body">
-          <div class="s80-details">
+          <div class="detail-row header-row">
+            <span class="rc-badge">RECEIPT NO: ${safeReceiptNo}</span>
+            <span class="date-txt">DATE: ${safeDate}</span>
+          </div>
+
+          <div class="detail-grid">
             <div class="detail-row">
-              <span class="rc-badge">RC: ${safeReceiptNo}</span>
-              <span class="date-txt">DT: ${safeDate}</span>
-            </div>
-            <div class="detail-row">
-              <span class="lbl">NAME:</span>
+              <span class="lbl">CUSTOMER:</span>
               <span class="val font-strong">${safeCustomerName}</span>
             </div>
             <div class="detail-row">
-              <span class="lbl">MOB:</span>
+              <span class="lbl">MOBILE:</span>
               <span class="val font-mono">${safeMobile}</span>
             </div>
             <div class="detail-row">
-              <span class="lbl">TV:</span>
-              <span class="val">${safeTvBrandModel}</span>
+              <span class="lbl">TV UNIT:</span>
+              <span class="val font-strong">${safeTvBrandModel}</span>
             </div>
             <div class="detail-row">
-              <span class="lbl">RACK:</span>
+              <span class="lbl">RACK NO:</span>
               <span class="rack-badge">${safeRackNo}</span>
-              <span class="lbl-inline">FLT:</span>
+              <span class="lbl-inline">FAULT:</span>
               <span class="val truncate-fault">${safeFault}</span>
             </div>
-          </div>
-
-          <!-- Barcode Area (Scannable Code128) -->
-          <div class="s80-barcode-col">
-            <svg id="sticker-barcode"></svg>
-            <div class="barcode-serial">${safeReceiptNo}</div>
           </div>
         </div>
       </div>
     `;
   } else {
-    // 50x25mm Small Sticker
-    // ONLY LOGO (NO SHOP NAME TEXT) + HELPLINE
+    // 50x25mm Small Sticker (NO BARCODE)
     bodyContent = `
       <div class="sticker-50x25">
         <div class="s50-hdr">
@@ -141,17 +135,11 @@ export function printStickerDirect(
           <div class="s50-phone">099045 88634</div>
         </div>
         <div class="s50-body">
-          <div class="s50-details">
-            <div class="s50-row"><b>RC:</b> <span class="font-mono font-black">${safeReceiptNo}</span></div>
-            <div class="s50-row truncate"><b>NAME:</b> ${safeCustomerName}</div>
-            <div class="s50-row"><b>MOB:</b> ${safeMobile}</div>
-            <div class="s50-row truncate"><b>TV:</b> ${safeTvBrandModel}</div>
-            <div class="s50-row"><b>RACK:</b> ${safeRackNo}</div>
-          </div>
-          <div class="s50-barcode-col">
-            <svg id="sticker-barcode"></svg>
-            <div class="s50-barcode-serial">${safeReceiptNo}</div>
-          </div>
+          <div class="s50-row s50-rc font-mono"><b>RC:</b> ${safeReceiptNo}</div>
+          <div class="s50-row truncate"><b>NAME:</b> ${safeCustomerName}</div>
+          <div class="s50-row"><b>MOB:</b> ${safeMobile}</div>
+          <div class="s50-row truncate"><b>TV:</b> ${safeTvBrandModel}</div>
+          <div class="s50-row"><b>RACK:</b> ${safeRackNo} &nbsp;|&nbsp; <b>DT:</b> ${safeDate}</div>
         </div>
       </div>
     `;
@@ -162,7 +150,6 @@ export function printStickerDirect(
 <head>
   <meta charset="UTF-8">
   <title>Sticker_${safeReceiptNo}</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <style>
     @page {
       size: ${widthMm}mm ${heightMm}mm;
@@ -242,21 +229,31 @@ export function printStickerDirect(
 
     .s80-body {
       display: flex;
+      flex-direction: column;
       justify-content: space-between;
-      align-items: stretch;
-      gap: 2mm;
+      gap: 0.8mm;
       flex: 1;
       overflow: hidden;
     }
 
-    .s80-details {
-      flex: 1;
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #000000;
+      color: #ffffff;
+      padding: 0.4mm 1mm;
+      border-radius: 0.6mm;
+      margin-bottom: 0.4mm;
+    }
+
+    .detail-grid {
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      overflow: hidden;
-      font-size: 6.2pt;
-      padding-right: 1mm;
+      gap: 0.6mm;
+      flex: 1;
+      justify-content: space-around;
+      font-size: 6.8pt;
     }
 
     .detail-row {
@@ -264,35 +261,36 @@ export function printStickerDirect(
       align-items: center;
       white-space: nowrap;
       overflow: hidden;
-      gap: 1.2mm;
-      line-height: 1.15;
+      gap: 1.5mm;
+      line-height: 1.2;
     }
 
     .rc-badge {
       font-family: monospace;
-      font-size: 7.5pt;
+      font-size: 8.5pt;
       font-weight: 900;
       letter-spacing: -0.2px;
+      color: #ffffff;
     }
 
     .date-txt {
-      font-size: 5.8pt;
-      font-weight: 700;
-      margin-left: auto;
-      color: #333333;
+      font-size: 6pt;
+      font-weight: 800;
+      color: #f1f5f9;
+      letter-spacing: 0.2px;
     }
 
     .lbl {
-      font-weight: 800;
-      min-width: 8.5mm;
-      font-size: 5.6pt;
-      color: #222222;
+      font-weight: 900;
+      min-width: 13mm;
+      font-size: 6.2pt;
+      color: #111111;
     }
 
     .lbl-inline {
-      font-weight: 800;
-      font-size: 5.6pt;
-      margin-left: 1mm;
+      font-weight: 900;
+      font-size: 6.2pt;
+      margin-left: 2mm;
     }
 
     .val {
@@ -304,50 +302,31 @@ export function printStickerDirect(
 
     .font-strong {
       font-weight: 900;
-      font-size: 6.5pt;
+      font-size: 7.2pt;
     }
 
     .font-mono {
       font-family: monospace;
-      font-size: 6.5pt;
-      font-weight: 800;
+      font-size: 7.5pt;
+      font-weight: 900;
     }
 
     .rack-badge {
       font-weight: 900;
-      font-size: 6.5pt;
+      font-size: 7.5pt;
+      background: #000000;
+      color: #ffffff;
+      padding: 0.2mm 1.2mm;
+      border-radius: 0.4mm;
     }
 
     .truncate-fault {
-      max-width: 25mm;
-      font-size: 5.8pt;
+      max-width: 38mm;
+      font-size: 6.5pt;
+      font-weight: 800;
     }
 
-    .s80-barcode-col {
-      width: 26mm;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding-left: 1mm;
-      border-left: 0.5px dashed #666666;
-    }
-
-    .s80-barcode-col svg {
-      width: 100% !important;
-      height: 14mm !important;
-    }
-
-    .barcode-serial {
-      font-family: monospace;
-      font-size: 6.2pt;
-      font-weight: 900;
-      letter-spacing: 1px;
-      margin-top: 0.4mm;
-      text-align: center;
-    }
-
-    /* 50mm x 25mm COMPACT STICKER */
+    /* 50mm x 25mm COMPACT STICKER (NO BARCODE) */
     .sticker-50x25 {
       width: 50mm;
       height: 25mm;
@@ -382,28 +361,29 @@ export function printStickerDirect(
     }
 
     .s50-phone {
-      font-size: 5.5pt;
+      font-size: 5.8pt;
       font-weight: 900;
       font-family: monospace;
     }
 
     .s50-body {
       display: flex;
+      flex-direction: column;
       justify-content: space-between;
-      align-items: center;
-      gap: 1mm;
+      gap: 0.4mm;
       flex: 1;
+      font-size: 5.6pt;
+      line-height: 1.15;
       overflow: hidden;
     }
 
-    .s50-details {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 0.2mm;
-      font-size: 5.2pt;
-      line-height: 1.1;
-      overflow: hidden;
+    .s50-rc {
+      font-size: 6.8pt;
+      font-weight: 900;
+      background: #000;
+      color: #fff;
+      padding: 0.2mm 0.8mm;
+      border-radius: 0.4mm;
     }
 
     .s50-row {
@@ -412,31 +392,11 @@ export function printStickerDirect(
       text-overflow: ellipsis;
     }
 
-    .s50-barcode-col {
-      width: 16mm;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .s50-barcode-col svg {
-      width: 100% !important;
-      height: 12mm !important;
-    }
-
-    .s50-barcode-serial {
-      font-family: monospace;
-      font-size: 5pt;
-      font-weight: 900;
-      text-align: center;
-    }
-
     .truncate {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 28mm;
+      max-width: 46mm;
     }
   </style>
 </head>
@@ -444,23 +404,10 @@ export function printStickerDirect(
   ${bodyContent}
   <script>
     window.onload = function() {
-      try {
-        if (typeof JsBarcode === 'function') {
-          JsBarcode('#sticker-barcode', "${safeReceiptNo}", {
-            format: "CODE128",
-            width: ${size === '80x30' ? 1.15 : 0.95},
-            height: ${size === '80x30' ? 42 : 28},
-            displayValue: false,
-            margin: 0
-          });
-        }
-      } catch (e) {
-        console.error('Barcode generation error', e);
-      }
       setTimeout(function() {
         window.focus();
         window.print();
-      }, 200);
+      }, 150);
     };
   </script>
 </body>
@@ -590,74 +537,52 @@ export const StickerPrint: React.FC<StickerPrintProps> = ({ receipt, isOpen, onC
             </div>
 
             {selectedSize === '80x30' ? (
-              /* 80mm x 30mm Real Card Preview */
+              /* 80mm x 30mm Real Card Preview (NO BARCODE) */
               <div
                 style={{ width: '80mm', height: '30mm' }}
-                className="bg-white border-2 border-slate-900 shadow-md p-2 flex flex-col justify-between select-none overflow-hidden"
+                className="bg-white border-2 border-slate-900 shadow-md p-1.5 flex flex-col justify-between select-none overflow-hidden"
               >
                 {/* Header: ONLY Logo + Helpline */}
-                <div className="flex items-center justify-between border-b border-black pb-1">
+                <div className="flex items-center justify-between border-b border-black pb-0.5">
                   <div className="flex items-center gap-1.5">
                     <KrutiLogo className="w-5 h-5" variant="monochrome" />
                   </div>
-                  <span className="text-[6.5pt] font-extrabold font-mono text-slate-900">
+                  <span className="text-[6.5pt] font-black font-mono text-slate-900">
                     TEL: 099045 88634
                   </span>
                 </div>
 
-                {/* Body: Left Details + Right Barcode */}
-                <div className="flex items-center justify-between gap-1.5 pt-1 text-[6.2pt] leading-tight text-slate-900 my-auto">
-                  <div className="flex flex-col gap-0.5 flex-1 overflow-hidden font-bold">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-black text-[7pt]">RC: {receiptNo}</span>
-                      <span className="text-[5.5pt] font-semibold text-slate-600">DT: {date}</span>
-                    </div>
-                    <div className="truncate font-black">NAME: {customerName}</div>
-                    <div className="font-mono">MOB: {mobile}</div>
-                    <div className="truncate">TV: {tvBrandModel}</div>
-                    <div className="flex items-center gap-1">
-                      <span>RACK: <b>{rackNo}</b></span>
-                      <span className="truncate text-slate-600">| FLT: {fault}</span>
-                    </div>
+                {/* Body: Full Details Without Barcode */}
+                <div className="flex flex-col justify-between flex-1 text-[6.5pt] leading-tight text-slate-900 my-auto py-0.5">
+                  <div className="flex items-center justify-between bg-black text-white px-1 py-0.5 rounded-xs">
+                    <span className="font-mono font-black text-[7.5pt]">RC: {receiptNo}</span>
+                    <span className="text-[6pt] font-bold">DT: {date}</span>
                   </div>
-
-                  {/* Right Barcode Box */}
-                  <div className="w-[25mm] pl-1.5 border-l border-dashed border-slate-400 flex flex-col items-center justify-center shrink-0">
-                    <div className="flex gap-0.5 items-end h-5 w-full justify-center">
-                      {[1, 2, 1, 3, 1, 2, 1, 3, 2, 1, 2, 1, 3, 1, 2, 1, 2, 3, 1, 2].map((w, i) => (
-                        <div key={i} className="bg-slate-900 h-full" style={{ width: `${w * 1.1}px` }} />
-                      ))}
-                    </div>
-                    <span className="text-[5.5pt] font-mono font-black mt-0.5 tracking-wider">{receiptNo}</span>
+                  <div className="truncate font-black text-[7pt] mt-0.5">NAME: {customerName}</div>
+                  <div className="font-mono font-bold">MOB: {mobile}</div>
+                  <div className="truncate font-bold">TV: {tvBrandModel}</div>
+                  <div className="flex items-center justify-between">
+                    <span>RACK: <b className="bg-black text-white px-1 py-0.2 rounded-xs">{rackNo}</b></span>
+                    <span className="truncate max-w-[45mm] text-slate-700 font-semibold">FLT: {fault}</span>
                   </div>
                 </div>
               </div>
             ) : (
-              /* 50mm x 25mm Real Card Preview */
+              /* 50mm x 25mm Real Card Preview (NO BARCODE) */
               <div
                 style={{ width: '50mm', height: '25mm' }}
-                className="bg-white border-2 border-slate-900 shadow-md p-1.5 flex flex-col justify-between select-none overflow-hidden"
+                className="bg-white border-2 border-slate-900 shadow-md p-1 flex flex-col justify-between select-none overflow-hidden"
               >
                 <div className="flex items-center justify-between border-b border-black pb-0.5">
-                  <KrutiLogo className="w-4 h-4" variant="monochrome" />
-                  <span className="text-[5pt] font-bold font-mono">099045 88634</span>
+                  <KrutiLogo className="w-3.5 h-3.5" variant="monochrome" />
+                  <span className="text-[5pt] font-black font-mono">099045 88634</span>
                 </div>
-                <div className="flex items-center justify-between gap-1 text-[5.5pt] leading-tight font-bold text-slate-900 my-auto">
-                  <div className="flex flex-col gap-0.5 overflow-hidden">
-                    <div>RC: <span className="font-black font-mono">{receiptNo}</span></div>
-                    <div className="truncate max-w-[24mm]">NAME: {customerName}</div>
-                    <div>MOB: {mobile}</div>
-                    <div className="truncate max-w-[24mm]">TV: {tvBrandModel}</div>
-                    <div>RACK: {rackNo}</div>
-                  </div>
-                  <div className="w-12 h-9 border-l border-dashed border-slate-400 flex flex-col items-center justify-center pl-1">
-                    <div className="flex gap-0.5 items-end h-5 w-full justify-center">
-                      {[1, 2, 1, 3, 1, 2, 1, 3, 2, 1, 2, 1].map((w, i) => (
-                        <div key={i} className="bg-slate-900 h-full" style={{ width: `${w}px` }} />
-                      ))}
-                    </div>
-                    <span className="text-[5pt] font-mono font-bold mt-0.5">{receiptNo}</span>
-                  </div>
+                <div className="flex flex-col justify-between flex-1 text-[5.5pt] leading-tight font-bold text-slate-900 my-auto">
+                  <div className="bg-black text-white px-0.5 py-0.2 rounded-xs font-mono font-black text-[6pt]">RC: {receiptNo}</div>
+                  <div className="truncate max-w-[46mm]">NAME: {customerName}</div>
+                  <div>MOB: {mobile}</div>
+                  <div className="truncate max-w-[46mm]">TV: {tvBrandModel}</div>
+                  <div>RACK: {rackNo} &nbsp;|&nbsp; DT: {date}</div>
                 </div>
               </div>
             )}
