@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { IReceipt, TVStatus, TVPriority, PaymentMethod } from '../types/receipt';
 import { receiptSchema } from '../lib/validation';
-import { saveClientReceipt, updateClientReceipt } from '../lib/client-storage';
+import { saveClientReceipt, updateClientReceipt, getClientReceipts } from '../lib/client-storage';
 import {
   searchCustomerProfiles,
   syncCustomerProfilesFromServer,
@@ -95,7 +95,55 @@ function generateNextSerialNumber(prevSerial?: string): string {
       return `${prefix}${String(nextNum).padStart(numStr.length, '0')}`;
     }
   }
-  return 'KR' + Math.floor(10000 + Math.random() * 89900);
+  return '611-0001';
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('kruti_auth_token') : null;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
+function computeHighest611Serial(receipts: Array<{ serialNumber?: string }>): string {
+  let highestNum = 0;
+  for (const r of receipts) {
+    const s = String(r.serialNumber || '').trim();
+    const m611 = s.match(/611[-_]?(\d+)/i);
+    if (m611) {
+      const val = parseInt(m611[1], 10);
+      if (!isNaN(val) && val > highestNum) {
+        highestNum = val;
+      }
+    }
+  }
+  const nextVal = highestNum > 0 ? highestNum + 1 : 1;
+  return `611-${String(nextVal).padStart(4, '0')}`;
+}
+
+async function fetchNextSerialFromServer(): Promise<string> {
+  const headers = getAuthHeaders();
+  try {
+    const res = await fetch('/api/receipts/next-serial', { headers, cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && data?.nextSerial && /^611-\d{4,}$/.test(data.nextSerial)) {
+        return data.nextSerial;
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch('/api/receipts?page=1&limit=500', { headers, cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && Array.isArray(data.receipts)) {
+        return computeHighest611Serial(data.receipts);
+      }
+    }
+  } catch {}
+
+  return computeHighest611Serial(getClientReceipts());
 }
 
 export const ReceiptForm: React.FC<ReceiptFormProps> = ({
@@ -108,7 +156,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
 
   const createBlankTV = (customSerial?: string): TVReceiptEntry => ({
     id: 'tv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    serialNumber: customSerial || generateNextSerialNumber(),
+    serialNumber: customSerial || '611-0001',
     brand: 'Sony',
     modelNumber: '',
     size: '43 inch',
@@ -173,13 +221,32 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
         },
       ];
     }
-    return [createBlankTV('KR' + Math.floor(10000 + Math.random() * 89900))];
+    return [createBlankTV('611-0001')];
   });
 
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Auto fetch next 7-digit receipt serial number (611-XXXX) on create
+  useEffect(() => {
+    if (!initialData && !isEditMode) {
+      fetchNextSerialFromServer().then((nextSerial) => {
+        setTvs((prev) => {
+          if (
+            prev.length === 1 &&
+            (!prev[0].serialNumber ||
+              prev[0].serialNumber === '611-0001' ||
+              prev[0].serialNumber.startsWith('KR'))
+          ) {
+            return [{ ...prev[0], serialNumber: nextSerial }];
+          }
+          return prev;
+        });
+      });
+    }
+  }, [initialData, isEditMode]);
 
   // Click on customer dropdown to auto-fill both name and phone!
   const selectCustomer = (profile: CustomerProfile) => {
@@ -253,22 +320,33 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
     setTvs(updated);
   };
 
-  // Regenerate serial number
+  // Regenerate serial number (always 7-digit 611-XXXX)
   const handleRegenerateSerial = (index: number) => {
-    const newSerial = 'KR' + Math.floor(10000 + Math.random() * 89900);
-    handleTVChange(index, 'serialNumber', newSerial);
+    fetchNextSerialFromServer().then((nextSerial) => {
+      if (index === 0) {
+        handleTVChange(index, 'serialNumber', nextSerial);
+      } else {
+        const prevSerial = tvs[index - 1]?.serialNumber || nextSerial;
+        handleTVChange(index, 'serialNumber', generateNextSerialNumber(prevSerial));
+      }
+    });
   };
 
   const resetForm = () => {
     setCustomerName('');
     setMobileNumber('');
     setReceivedDate(getTodayDate());
-    setTvs([createBlankTV('KR' + Math.floor(10000 + Math.random() * 89900))]);
+    setTvs([createBlankTV('611-0001')]);
     setErrors({});
     setServerError(null);
     setSuccessMessage(null);
     setShowNameDropdown(false);
     setShowMobileDropdown(false);
+    fetchNextSerialFromServer().then((nextSerial) => {
+      setTvs((prev) =>
+        prev.length === 1 ? [{ ...prev[0], serialNumber: nextSerial }] : prev
+      );
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -358,7 +436,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
         const targetSerial = initialData!.serialNumber;
         const res = await fetch(`/api/receipts/${encodeURIComponent(targetSerial)}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(singleReceipt),
         });
 
@@ -387,7 +465,7 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
           const item = receiptsToSave[i];
           const res = await fetch('/api/receipts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(item),
           });
 
@@ -732,13 +810,13 @@ export const ReceiptForm: React.FC<ReceiptFormProps> = ({
                         onChange={(e) =>
                           handleTVChange(idx, 'serialNumber', e.target.value.toUpperCase())
                         }
-                        placeholder="KR10234"
+                        placeholder="611-0001"
                         className="w-28 text-xs font-mono font-extrabold text-red-600 uppercase focus:outline-none bg-transparent"
                       />
                       <button
                         type="button"
                         onClick={() => handleRegenerateSerial(idx)}
-                        title="Generate New Receipt Number"
+                        title="Generate Next 7-Digit Receipt Number (611-XXXX)"
                         className="p-1 hover:bg-slate-100 rounded-md text-slate-400 hover:text-slate-700 transition cursor-pointer"
                       >
                         <RefreshCw className="w-3 h-3" />

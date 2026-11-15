@@ -12,15 +12,129 @@ import {
   ArrowRight,
   RefreshCw,
   PlusCircle,
-  Search,
   Scan,
 } from 'lucide-react';
-import { DashboardStats } from '../types/receipt';
+import { DashboardStats, IReceipt } from '../types/receipt';
 import { getClientDashboardStats } from '../lib/client-storage';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 
 interface DashboardCardsProps {
   onNavigate: (path: string) => void;
+}
+
+function calculateCalendarDays(dateInput?: string): number {
+  if (!dateInput) return 0;
+  const dateOnly = dateInput.split('T')[0];
+  const parts = dateOnly.split('-');
+  if (parts.length !== 3) return 0;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return 0;
+
+  const receivedMidnight = new Date(year, month, day).getTime();
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.max(0, Math.round((todayMidnight - receivedMidnight) / (1000 * 60 * 60 * 24)));
+}
+
+function computeStatsFromReceipts(receipts: IReceipt[]): DashboardStats {
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate()
+  ).padStart(2, '0')}`;
+
+  let totalReceipts = receipts.length;
+  let totalTVs = 0;
+  let pending = 0;
+  let underRepair = 0;
+  let ready = 0;
+  let delivered = 0;
+  let returned = 0;
+  let rejected = 0;
+  let todayReceipts = 0;
+  let oldReceipts = 0;
+  let urgentReceipts = 0;
+
+  for (const r of receipts) {
+    const rDateStr = String(r.receivedDate || r.createdAt || '').split('T')[0];
+    if (rDateStr === todayStr) {
+      todayReceipts++;
+    }
+
+    const daysDiff = calculateCalendarDays(r.receivedDate || r.createdAt);
+    let receiptHasNonDelivered = false;
+
+    const tvList = Array.isArray(r.tvs) && r.tvs.length > 0 ? r.tvs : [r as any];
+
+    for (const tv of tvList) {
+      totalTVs++;
+      const st = String(tv.status || (r as any).status || 'Pending')
+        .trim()
+        .toLowerCase();
+      const pr = String(tv.priority || (r as any).priority || 'Normal')
+        .trim()
+        .toLowerCase();
+
+      if (st === 'pending') {
+        pending++;
+      } else if (st === 'under repair' || st === 'underrepair' || st === 'under_repair') {
+        underRepair++;
+      } else if (st === 'ready' || st === 'completed') {
+        ready++;
+      } else if (st === 'delivered') {
+        delivered++;
+      } else if (st === 'return' || st === 'returned' || st === 'total loss') {
+        returned++;
+      } else if (st === 'reject' || st === 'rejected' || st === 'cancel') {
+        rejected++;
+      } else {
+        pending++;
+      }
+
+      const isClosed =
+        st === 'delivered' ||
+        st === 'return' ||
+        st === 'returned' ||
+        st === 'reject' ||
+        st === 'rejected' ||
+        st === 'cancel' ||
+        st === 'total loss';
+
+      if (!isClosed) {
+        receiptHasNonDelivered = true;
+      }
+
+      if (pr === 'urgent' && !isClosed) {
+        urgentReceipts++;
+      }
+    }
+
+    if (daysDiff >= 4 && receiptHasNonDelivered) {
+      oldReceipts++;
+    }
+  }
+
+  return {
+    totalReceipts,
+    totalTVs,
+    pending,
+    underRepair,
+    ready,
+    completed: ready,
+    delivered,
+    cancel: rejected,
+    totalLoss: returned,
+    returned,
+    rejected,
+    todayReceipts,
+    oldReceipts,
+    overdueCount: oldReceipts,
+    urgentReceipts,
+    totalCost: 0,
+    totalPaid: 0,
+    totalPendingDue: 0,
+  };
 }
 
 export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) => {
@@ -33,17 +147,50 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/dashboard');
+      const token = typeof window !== 'undefined' ? localStorage.getItem('kruti_auth_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      // 1. Try dedicated dashboard endpoint first
+      const res = await fetch('/api/dashboard', { headers, cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && data.stats) {
-          setStats(data.stats);
+        const s = data?.stats;
+        if (
+          data?.success &&
+          s &&
+          typeof s.pending === 'number' &&
+          typeof s.underRepair === 'number' &&
+          typeof s.ready === 'number' &&
+          typeof s.delivered === 'number' &&
+          typeof s.todayReceipts === 'number' &&
+          typeof s.oldReceipts === 'number' &&
+          typeof s.urgentReceipts === 'number'
+        ) {
+          setStats({
+            ...s,
+            returned: s.returned ?? s.totalLoss ?? 0,
+            rejected: s.rejected ?? s.cancel ?? 0,
+          });
           return;
         }
       }
+
+      // 2. Fallback: fetch receipts directly from API & calculate all counts accurately
+      const receiptsRes = await fetch('/api/receipts?page=1&limit=2000', { headers, cache: 'no-store' });
+      if (receiptsRes.ok) {
+        const receiptsData = await receiptsRes.json();
+        if (receiptsData?.success && Array.isArray(receiptsData.receipts)) {
+          setStats(computeStatsFromReceipts(receiptsData.receipts));
+          return;
+        }
+      }
+
       throw new Error('API unavailable');
     } catch {
-      // Local metrics calculation
+      // 3. Final local metrics calculation fallback
       const localStats = getClientDashboardStats();
       setStats(localStats);
     } finally {
@@ -124,8 +271,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
             </div>
           </div>
           <div className="mt-4">
-            <span className="text-3xl sm:text-4xl font-black text-slate-900 font-mono">
-              {stats ? stats.todayReceipts : '...'}
+            <span className="text-3xl sm:text-4xl font-black text-slate-900 font-mono block">
+              {stats ? Number(stats.todayReceipts ?? 0) : '...'}
             </span>
             <p className="text-xs text-slate-500 mt-1">Booked in shop today</p>
           </div>
@@ -142,8 +289,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
             </div>
           </div>
           <div className="mt-4">
-            <span className="text-3xl sm:text-4xl font-black text-amber-950 font-mono">
-              {stats ? stats.oldReceipts : '...'}
+            <span className="text-3xl sm:text-4xl font-black text-amber-950 font-mono block">
+              {stats ? Number(stats.oldReceipts ?? stats.overdueCount ?? 0) : '...'}
             </span>
             <p className="text-xs text-amber-800 font-medium mt-1">
               Requires technician attention & customer follow-up
@@ -162,15 +309,15 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
             </div>
           </div>
           <div className="mt-4">
-            <span className="text-3xl sm:text-4xl font-black text-red-900 font-mono">
-              {stats ? stats.urgentReceipts : '...'}
+            <span className="text-3xl sm:text-4xl font-black text-red-900 font-mono block">
+              {stats ? Number(stats.urgentReceipts ?? 0) : '...'}
             </span>
             <p className="text-xs text-red-700 font-medium mt-1">High customer expectation</p>
           </div>
         </div>
       </div>
 
-      {/* Main Breakdown Grid (Total Receipts, Total TVs, Pending, Under Repair, Ready, Delivered) */}
+      {/* Main Breakdown Grid */}
       <div>
         <h2 className="text-base font-extrabold text-slate-900 mb-4 flex items-center gap-2">
           Workshop Volume & Stage Breakdown
@@ -184,7 +331,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <FileSpreadsheet className="w-3.5 h-3.5 text-slate-400" />
             </div>
             <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
-              {stats ? stats.totalReceipts : '-'}
+              {stats ? Number(stats.totalReceipts ?? 0) : '-'}
             </p>
           </div>
 
@@ -195,7 +342,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <Tv className="w-3.5 h-3.5 text-slate-400" />
             </div>
             <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
-              {stats ? stats.totalTVs : '-'}
+              {stats ? Number(stats.totalTVs ?? 0) : '-'}
             </p>
           </div>
 
@@ -206,7 +353,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <Clock className="w-3.5 h-3.5 text-amber-600" />
             </div>
             <p className="text-xl font-black text-amber-950 mt-1.5 font-mono">
-              {stats ? stats.pending : '-'}
+              {stats ? Number(stats.pending ?? 0) : '-'}
             </p>
           </div>
 
@@ -217,7 +364,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <Wrench className="w-3.5 h-3.5 text-blue-600" />
             </div>
             <p className="text-xl font-black text-blue-950 mt-1.5 font-mono">
-              {stats ? stats.underRepair : '-'}
+              {stats ? Number(stats.underRepair ?? 0) : '-'}
             </p>
           </div>
 
@@ -228,7 +375,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             </div>
             <p className="text-xl font-black text-emerald-950 mt-1.5 font-mono">
-              {stats ? stats.ready : '-'}
+              {stats ? Number(stats.ready ?? stats.completed ?? 0) : '-'}
             </p>
           </div>
 
@@ -239,7 +386,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <PackageCheck className="w-3.5 h-3.5 text-slate-600" />
             </div>
             <p className="text-xl font-black text-slate-900 mt-1.5 font-mono">
-              {stats ? stats.delivered : '-'}
+              {stats ? Number(stats.delivered ?? 0) : '-'}
             </p>
           </div>
 
@@ -250,7 +397,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <span className="w-2 h-2 rounded-full bg-purple-600" />
             </div>
             <p className="text-xl font-black text-purple-950 mt-1.5 font-mono">
-              {stats ? (stats.returned ?? 0) : '-'}
+              {stats ? Number(stats.returned ?? stats.totalLoss ?? 0) : '-'}
             </p>
           </div>
 
@@ -261,7 +408,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
               <span className="w-2 h-2 rounded-full bg-rose-600" />
             </div>
             <p className="text-xl font-black text-rose-950 mt-1.5 font-mono">
-              {stats ? (stats.rejected ?? 0) : '-'}
+              {stats ? Number(stats.rejected ?? stats.cancel ?? 0) : '-'}
             </p>
           </div>
         </div>
@@ -282,7 +429,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
                 Create New Repair Receipt
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Generate job card for 1 or more TVs, assign technician, and create 50×25mm sticker.
+                Generate job card for 1 or more TVs, assign technician, and create thermal sticker.
               </p>
             </div>
           </div>
@@ -302,7 +449,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
                 Manage & Filter All Receipts
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Search by serial, customer or phone, download Excel export, print A4 PDF receipts.
+                Search by Receipt No or Mobile, download Excel export, print A4 PDF receipts.
               </p>
             </div>
           </div>
@@ -316,7 +463,6 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ onNavigate }) =>
         onClose={() => setIsScannerOpen(false)}
         onScanSuccess={(scannedCode) => {
           setIsScannerOpen(false);
-          // Navigate to update/edit receipt directly
           onNavigate(`/update-receipt/${encodeURIComponent(scannedCode)}`);
         }}
       />

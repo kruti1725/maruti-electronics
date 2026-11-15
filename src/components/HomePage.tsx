@@ -221,7 +221,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
           <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
             <a
-              href="tel:8511296117"
+              href="tel:+917778833577"
               className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl flex items-center gap-2 transition"
             >
               <PhoneCall className="w-4 h-4 text-red-500" />
