@@ -145,7 +145,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
             Customer TV Repair Tracking
           </h1>
           <p className="text-sm text-slate-600 mt-2">
-            Apna registered <strong className="text-slate-900">10-Digit Mobile Number</strong> (e.g. 8320831115) enter karein aur live status check karein.
+            Apna registered <strong className="text-slate-900">10-Digit Mobile Number</strong> enter karein aur live status check karein.
           </p>
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 inline-block">
             <strong>Security Notice:</strong> Customer status check sirf <strong>Mobile Number</strong> se allowed hai (Name ya Receipt No se search nahi ho sakti).
@@ -176,7 +176,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
                   setSearchTerm(clean);
                   if (error) setError(null);
                 }}
-                placeholder="Enter 10-digit registered Mobile Number (e.g. 8320831115)..."
+                placeholder="Enter 10-digit registered Mobile Number..."
                 className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-2 border-slate-200 focus:border-red-600 focus:bg-white focus:outline-none rounded-2xl text-slate-900 font-bold placeholder-slate-400 tracking-wide transition"
               />
             </div>
@@ -200,40 +200,6 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
           </div>
         </form>
 
-        {/* Quick sample chips */}
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
-          <span>Search sample numbers:</span>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchTerm('8320831115');
-              handleSearch('8320831115');
-            }}
-            className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
-          >
-            8320831115
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchTerm('9876543210');
-              handleSearch('9876543210');
-            }}
-            className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
-          >
-            9876543210
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchTerm('7778833577');
-              handleSearch('7778833577');
-            }}
-            className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 hover:text-red-600 rounded-lg font-mono text-slate-700 transition cursor-pointer"
-          >
-            7778833577
-          </button>
-        </div>
       </div>
 
       {/* Error / Not Found State */}
@@ -245,8 +211,8 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
             <p className="text-sm text-red-700 mt-1">{error}</p>
             <p className="text-xs text-red-600 mt-2 font-medium">
               Need assistance? Call Kruti Electronics help desk directly at{' '}
-              <a href="tel:07778833577" className="underline font-bold">
-                +91 77788 33577
+              <a href="tel:+917778833577" className="underline font-bold">
+                +91 7778833577
               </a>
               .
             </p>
@@ -360,7 +326,7 @@ export const SearchReceipt: React.FC<SearchReceiptProps> = ({
                   </div>
                 </div>
 
-                {/* TVs In This Receipt */}
+                {/* TVs In This Receipt (Section 4 & 5 support) */}
                 <div className="p-6 sm:p-8 space-y-6">
                   <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                     <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
